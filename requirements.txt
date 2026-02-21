@@ -1,0 +1,42 @@
+# ── Web framework ─────────────────────────────────────────────────────────────
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+
+# ── LLM / Anthropic ───────────────────────────────────────────────────────────
+anthropic==0.43.0
+
+# ── Embeddings (CPU-only torch) ───────────────────────────────────────────────
+# Install torch CPU-only to keep image small (~700 MB vs ~2.5 GB with CUDA)
+# Override with torch==2.5.1+cu121 for GPU support
+torch==2.5.1
+transformers==4.48.0
+numpy==1.26.4
+
+# ── Vector database ───────────────────────────────────────────────────────────
+chromadb==0.6.3
+
+# ── PDF parsing ───────────────────────────────────────────────────────────────
+pypdf==5.1.0
+pdfplumber==0.11.4
+
+# ── Text splitting ────────────────────────────────────────────────────────────
+langchain-text-splitters==0.3.4
+tiktoken==0.8.0
+
+# ── Hybrid retrieval ──────────────────────────────────────────────────────────
+rank-bm25==0.2.2
+
+# ── Monitoring ────────────────────────────────────────────────────────────────
+structlog==24.4.0
+prometheus-client==0.21.1
+prometheus-fastapi-instrumentator==7.0.0
+
+# ── HTTP / Async utilities ────────────────────────────────────────────────────
+httpx==0.28.1
+tenacity==9.0.0
+python-ulid==3.1.0
