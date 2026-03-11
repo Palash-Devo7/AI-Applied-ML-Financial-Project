@@ -48,13 +48,23 @@ async def get_vector_store():
 def _get_generation_service_singleton():
     from app.services.generation_service import GenerationService
     settings = get_settings()
+    if settings.llm_provider == "claude":
+        api_key = settings.anthropic_api_key
+        model = settings.claude_model
+    elif settings.llm_provider == "groq":
+        api_key = settings.groq_api_key
+        model = settings.groq_model
+    else:
+        api_key = settings.deepseek_api_key
+        model = settings.deepseek_model
     return GenerationService(
-        api_key=settings.anthropic_api_key,
-        model=settings.claude_model,
-        temperature=settings.claude_temperature,
-        max_tokens=settings.claude_max_tokens,
+        api_key=api_key,
+        model=model,
+        temperature=settings.llm_temperature,
+        max_tokens=settings.llm_max_tokens,
         collect_training_data=settings.collect_training_data,
         training_data_path=settings.training_data_path,
+        llm_provider=settings.llm_provider,
     )
 
 

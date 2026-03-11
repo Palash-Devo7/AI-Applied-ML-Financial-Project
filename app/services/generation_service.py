@@ -1,6 +1,6 @@
-"""LLM generation service using Claude via the Anthropic async SDK.
+"""LLM generation service — pluggable ModelBackend (DeepSeek default, Claude optional).
 
-Implements a ModelBackend Protocol so a fine-tuned backend can slot in
+Implements a ModelBackend Protocol so backends can be swapped via env var
 without touching call sites (Phase 2 hook).
 """
 from __future__ import annotations
@@ -42,7 +42,147 @@ class ModelBackend(Protocol):
         ...
 
 
-# ── Claude backend ─────────────────────────────────────────────────────────────
+# ── DeepSeek backend (default) ────────────────────────────────────────────────
+
+class DeepSeekBackend:
+    """DeepSeek async backend via OpenAI-compatible API."""
+
+    DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "deepseek-chat",
+        temperature: float = 0.1,
+        max_tokens: int = 2048,
+    ) -> None:
+        from openai import AsyncOpenAI
+
+        self._client = AsyncOpenAI(api_key=api_key, base_url=self.DEEPSEEK_BASE_URL)
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+
+    @retry(
+        retry=retry_if_exception_type(Exception),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    async def generate(
+        self,
+        question: str,
+        context: str,
+        query_type: str = "GENERAL",
+    ) -> tuple[str, TokenUsageDetail]:
+        """Call DeepSeek API and return (answer, token_usage)."""
+        user_prompt = build_user_prompt(question=question, context=context, query_type=query_type)
+        t0 = time.perf_counter()
+
+        response = await self._client.chat.completions.create(
+            model=self.model,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+
+        elapsed = time.perf_counter() - t0
+        answer = response.choices[0].message.content or ""
+
+        usage = TokenUsageDetail(
+            input_tokens=response.usage.prompt_tokens,
+            output_tokens=response.usage.completion_tokens,
+            total_tokens=response.usage.total_tokens,
+        )
+
+        LLM_INPUT_TOKENS_TOTAL.labels(model=self.model).inc(usage.input_tokens)
+        LLM_OUTPUT_TOKENS_TOTAL.labels(model=self.model).inc(usage.output_tokens)
+        LLM_LATENCY_SECONDS.labels(model=self.model).observe(elapsed)
+
+        logger.info(
+            "deepseek_generation_complete",
+            model=self.model,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            latency_s=round(elapsed, 2),
+        )
+        return answer, usage
+
+
+# ── Groq backend (free tier, set LLM_PROVIDER=groq) ──────────────────────────
+
+class GroqBackend:
+    """Groq async backend via OpenAI-compatible API (free tier available)."""
+
+    GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "llama-3.3-70b-versatile",
+        temperature: float = 0.1,
+        max_tokens: int = 2048,
+    ) -> None:
+        from openai import AsyncOpenAI
+
+        self._client = AsyncOpenAI(api_key=api_key, base_url=self.GROQ_BASE_URL)
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+
+    @retry(
+        retry=retry_if_exception_type(Exception),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    async def generate(
+        self,
+        question: str,
+        context: str,
+        query_type: str = "GENERAL",
+    ) -> tuple[str, TokenUsageDetail]:
+        """Call Groq API and return (answer, token_usage)."""
+        user_prompt = build_user_prompt(question=question, context=context, query_type=query_type)
+        t0 = time.perf_counter()
+
+        response = await self._client.chat.completions.create(
+            model=self.model,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+
+        elapsed = time.perf_counter() - t0
+        answer = response.choices[0].message.content or ""
+
+        usage = TokenUsageDetail(
+            input_tokens=response.usage.prompt_tokens,
+            output_tokens=response.usage.completion_tokens,
+            total_tokens=response.usage.total_tokens,
+        )
+
+        LLM_INPUT_TOKENS_TOTAL.labels(model=self.model).inc(usage.input_tokens)
+        LLM_OUTPUT_TOKENS_TOTAL.labels(model=self.model).inc(usage.output_tokens)
+        LLM_LATENCY_SECONDS.labels(model=self.model).observe(elapsed)
+
+        logger.info(
+            "groq_generation_complete",
+            model=self.model,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            latency_s=round(elapsed, 2),
+        )
+        return answer, usage
+
+
+# ── Claude backend (optional, set LLM_PROVIDER=claude) ───────────────────────
 
 class ClaudeBackend:
     """Anthropic Claude async backend with retry and token tracking."""
@@ -95,18 +235,14 @@ class ClaudeBackend:
             raise
 
         elapsed = time.perf_counter() - t0
-
-        # Extract text content
         answer = message.content[0].text if message.content else ""
 
-        # Token accounting
         usage = TokenUsageDetail(
             input_tokens=message.usage.input_tokens,
             output_tokens=message.usage.output_tokens,
             total_tokens=message.usage.input_tokens + message.usage.output_tokens,
         )
 
-        # Prometheus metrics
         LLM_INPUT_TOKENS_TOTAL.labels(model=self.model).inc(usage.input_tokens)
         LLM_OUTPUT_TOKENS_TOTAL.labels(model=self.model).inc(usage.output_tokens)
         LLM_LATENCY_SECONDS.labels(model=self.model).observe(elapsed)
@@ -147,18 +283,33 @@ class GenerationService:
     def __init__(
         self,
         api_key: str,
-        model: str = "claude-sonnet-4-6",
+        model: str = "deepseek-chat",
         temperature: float = 0.1,
         max_tokens: int = 2048,
         collect_training_data: bool = False,
         training_data_path: str = "./data/training_data.jsonl",
         use_finetuned_model: bool = False,
         finetuned_model_path: str = "",
+        llm_provider: str = "deepseek",
     ) -> None:
         if use_finetuned_model and finetuned_model_path:
             self._backend: ModelBackend = FineTunedModelBackend(finetuned_model_path)
-        else:
+        elif llm_provider == "claude":
             self._backend = ClaudeBackend(
+                api_key=api_key,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        elif llm_provider == "groq":
+            self._backend = GroqBackend(
+                api_key=api_key,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        else:
+            self._backend = DeepSeekBackend(
                 api_key=api_key,
                 model=model,
                 temperature=temperature,

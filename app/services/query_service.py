@@ -44,6 +44,10 @@ class QueryService:
 
             # 2. Extract entities and build metadata filter
             entities = self._mcp.extract_entities(request.question)
+            # Top-level company field takes precedence over entity extraction
+            if request.company:
+                entities["company"] = request.company
+                entities.pop("ticker", None)  # company name filter is more precise
             where_filter = self._mcp.build_metadata_filters(
                 entities=entities,
                 explicit_filters=request.filters,

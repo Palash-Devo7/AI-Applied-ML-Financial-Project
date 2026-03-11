@@ -1,6 +1,10 @@
 """Document ingestion router: POST /documents/upload."""
+import asyncio
+from typing import Dict
+
 import structlog
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
+from pydantic import BaseModel
 
 from app.dependencies import get_embedding_service, get_vector_store
 from app.models.documents import UploadResponse
@@ -12,14 +16,69 @@ logger = structlog.get_logger(__name__)
 _MAX_FILE_SIZE_MB = 50
 _MAX_FILE_SIZE_BYTES = _MAX_FILE_SIZE_MB * 1024 * 1024
 
+# In-memory job tracker: document_id -> status dict
+_jobs: Dict[str, dict] = {}
+
+
+class JobStatus(BaseModel):
+    document_id: str
+    filename: str
+    status: str           # processing | ingested | failed
+    detail: str = ""
+    chunk_count: int = 0
+    company: str = ""
+    report_type: str = ""
+    year: int | None = None
+
+
+async def _run_ingestion(
+    document_id: str,
+    content: bytes,
+    filename: str,
+    overrides: dict,
+    embedding_service,
+    vector_store,
+) -> None:
+    """Background task: run full ingestion pipeline and update job status."""
+    service = IngestionService(
+        embedding_service=embedding_service,
+        vector_store=vector_store,
+    )
+    try:
+        result = await service.ingest(
+            content=content,
+            filename=filename,
+            overrides=overrides,
+            document_id=document_id,
+        )
+        _jobs[document_id] = {
+            "document_id": document_id,
+            "filename": filename,
+            "status": "ingested",
+            "chunk_count": result.chunk_count,
+            "company": result.company or "",
+            "report_type": result.report_type or "",
+            "year": result.year,
+        }
+        logger.info("background_ingestion_complete", document_id=document_id, filename=filename)
+    except Exception as exc:
+        _jobs[document_id] = {
+            "document_id": document_id,
+            "filename": filename,
+            "status": "failed",
+            "detail": str(exc),
+        }
+        logger.error("background_ingestion_failed", document_id=document_id, error=str(exc))
+
 
 @router.post(
     "/upload",
-    response_model=UploadResponse,
+    response_model=JobStatus,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Upload and ingest a financial document (PDF)",
+    summary="Upload and ingest a financial document (PDF) — returns immediately, processes in background",
 )
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="PDF file to ingest"),
     company: str | None = Form(None, description="Company name override"),
     ticker: str | None = Form(None, description="Stock ticker override"),
@@ -28,7 +87,7 @@ async def upload_document(
     sector: str | None = Form(None, description="Industry sector"),
     embedding_service=Depends(get_embedding_service),
     vector_store=Depends(get_vector_store),
-) -> UploadResponse:
+) -> JobStatus:
     # Validate file type
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(
@@ -36,7 +95,6 @@ async def upload_document(
             detail="Only PDF files are supported",
         )
 
-    # Read file content
     content = await file.read()
 
     if len(content) == 0:
@@ -63,23 +121,56 @@ async def upload_document(
         if v is not None
     }
 
-    service = IngestionService(
+    # Generate document ID upfront so we can track it immediately
+    from ulid import ULID
+    document_id = str(ULID())
+
+    # Register job as processing
+    _jobs[document_id] = {
+        "document_id": document_id,
+        "filename": file.filename,
+        "status": "processing",
+    }
+
+    # Kick off ingestion in background — returns immediately
+    background_tasks.add_task(
+        _run_ingestion,
+        document_id=document_id,
+        content=content,
+        filename=file.filename,
+        overrides=overrides,
         embedding_service=embedding_service,
         vector_store=vector_store,
     )
 
-    try:
-        result = await service.ingest(
-            content=content,
-            filename=file.filename,
-            overrides=overrides,
-        )
-        return result
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.error("upload_failed", filename=file.filename, error=str(exc))
+    logger.info("ingestion_queued", document_id=document_id, filename=file.filename)
+
+    return JobStatus(
+        document_id=document_id,
+        filename=file.filename,
+        status="processing",
+        detail="Ingestion started in background. Poll /documents/{document_id}/status to track progress.",
+    )
+
+
+@router.get(
+    "/{document_id}/status",
+    response_model=JobStatus,
+    summary="Check ingestion status for a document",
+)
+async def get_ingestion_status(document_id: str) -> JobStatus:
+    job = _jobs.get(document_id)
+    if not job:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Ingestion failed: {exc}",
-        ) from exc
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No job found for document_id={document_id}",
+        )
+    return JobStatus(**job)
+
+
+@router.get(
+    "/jobs",
+    summary="List all ingestion jobs and their statuses",
+)
+async def list_jobs() -> list[JobStatus]:
+    return [JobStatus(**j) for j in _jobs.values()]

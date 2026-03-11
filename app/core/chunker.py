@@ -19,12 +19,22 @@ logger = structlog.get_logger(__name__)
 _SECTION_BOUNDARY_PATTERNS = [
     # Item-style headings (10-K / 10-Q)
     r"ITEM\s+\d+[A-Z]?\.\s+[A-Z][A-Z\s&,;]{5,}",
-    # Named sections
+    # US SEC named sections
     r"(?:^|\n)(?:PART\s+[IVX]+\.?\s+)?(?:RISK\s+FACTORS?|QUANTITATIVE\s+AND\s+QUALITATIVE"
     r"|RESULTS?\s+OF\s+OPERATIONS?|MANAGEMENT[''S]*\s+DISCUSSION|FINANCIAL\s+STATEMENTS?"
     r"|LEGAL\s+PROCEEDINGS?|CRITICAL\s+ACCOUNTING|BUSINESS\b|PROPERTIES\b"
     r"|SELECTED\s+FINANCIAL\s+DATA|MARKET\s+FOR\s+REGISTRANT"
     r"|CONTROLS?\s+AND\s+PROCEDURES?)(?:\s+AND\s+\w+)?",
+    # General / Indian financial report sections
+    r"(?:^|\n)(?:BALANCE\s+SHEET|STATEMENT\s+OF\s+(?:FINANCIAL\s+POSITION|ASSETS|PROFIT|CASH\s+FLOW)"
+    r"|INCOME\s+STATEMENT|PROFIT\s+(?:AND|&)\s+LOSS|CASH\s+FLOW\s+STATEMENT"
+    r"|NOTES?\s+TO\s+(?:THE\s+)?(?:FINANCIAL|STANDALONE|CONSOLIDATED)\s+(?:STATEMENTS?|ACCOUNTS?)"
+    r"|STANDALONE\s+(?:FINANCIAL|BALANCE)|CONSOLIDATED\s+(?:FINANCIAL|BALANCE)"
+    r"|STATEMENT\s+OF\s+CHANGES\s+IN\s+EQUITY|DIRECTORS[''S]*\s+REPORT"
+    r"|MANAGEMENT\s+(?:REPORT|REVIEW|DISCUSSION)|AUDITORS[''S]*\s+REPORT"
+    r"|CORPORATE\s+GOVERNANCE|SUSTAINABILITY|ESG|SEGMENT\s+(?:REPORT|INFORMATION|RESULTS?)"
+    r"|CAPITAL\s+EXPENDITURE|REVENUE\s+FROM\s+OPERATIONS|EBITDA|KEY\s+(?:FINANCIAL\s+)?HIGHLIGHTS?"
+    r"|FINANCIAL\s+SUMMARY|FINANCIAL\s+PERFORMANCE|FINANCIAL\s+REVIEW)",
 ]
 _SECTION_BOUNDARY_RE = re.compile(
     "|".join(_SECTION_BOUNDARY_PATTERNS),
@@ -129,7 +139,8 @@ class FinancialChunker:
         return RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
-            separators=["\n\n", "\n", ". ", ", ", " ", ""],
+            # Prefer splitting on paragraph/sentence boundaries, avoid splitting mid-line
+            separators=["\n\n\n", "\n\n", "\n", ". ", "! ", "? ", "; ", ", ", " ", ""],
             length_function=len,
         )
 

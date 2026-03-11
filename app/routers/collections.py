@@ -19,6 +19,26 @@ async def list_collections(vector_store=Depends(get_vector_store)) -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@router.get("/companies")
+async def list_companies(vector_store=Depends(get_vector_store)) -> dict:
+    """List all unique company names stored in the collection."""
+    try:
+        from starlette.concurrency import run_in_threadpool
+        result = await run_in_threadpool(
+            vector_store._collection.get,
+            include=["metadatas"],
+        )
+        companies = sorted({
+            m.get("company")
+            for m in (result.get("metadatas") or [])
+            if m.get("company")
+        })
+        return {"companies": companies, "count": len(companies)}
+    except Exception as exc:
+        logger.error("list_companies_failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @router.get("/{collection_name}")
 async def get_collection(
     collection_name: str,

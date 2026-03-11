@@ -26,11 +26,24 @@ class Settings(BaseSettings):
     api_port: int = 8000
     api_workers: int = 1
 
-    # ── Claude / Anthropic ────────────────────────────────────────────────────
-    anthropic_api_key: str = Field(..., description="Anthropic API key")
+    # ── LLM provider ─────────────────────────────────────────────────────────
+    llm_provider: Literal["deepseek", "claude", "groq"] = "groq"
+
+    # ── Groq (free tier, default) ─────────────────────────────────────────────
+    groq_api_key: str = Field(default="", description="Groq API key")
+    groq_model: str = "llama-3.3-70b-versatile"
+
+    # ── DeepSeek (optional) ───────────────────────────────────────────────────
+    deepseek_api_key: str = Field(default="", description="DeepSeek API key")
+    deepseek_model: str = "deepseek-chat"
+
+    # ── Claude / Anthropic (optional) ────────────────────────────────────────
+    anthropic_api_key: str = Field(default="", description="Anthropic API key")
     claude_model: str = "claude-sonnet-4-6"
-    claude_temperature: float = 0.1
-    claude_max_tokens: int = 2048
+
+    # ── Shared LLM settings ───────────────────────────────────────────────────
+    llm_temperature: float = 0.1
+    llm_max_tokens: int = 2048
 
     # ── Embeddings ────────────────────────────────────────────────────────────
     embedding_model: str = "ProsusAI/finbert"

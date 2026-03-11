@@ -1,4 +1,4 @@
-"""PDF document parser with pypdf primary and pdfplumber fallback."""
+"""PDF document parser with pypdf primary, pdfplumber fallback, and OCR fallback."""
 from __future__ import annotations
 
 import io
@@ -7,6 +7,10 @@ from dataclasses import dataclass
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+# Tesseract path on Windows — override via TESSERACT_CMD env var if installed elsewhere
+import os
+_TESSERACT_CMD = os.getenv("TESSERACT_CMD", r"C:\Program Files\Tesseract-OCR\tesseract.exe")
 
 
 @dataclass
@@ -57,6 +61,20 @@ class DocumentParser:
                 parser_used = fallback_parser
                 total_chars = fallback_chars
 
+        # OCR fallback: if still too little text, document is likely image-based
+        if total_chars < self.MIN_CHARS_PER_PAGE * max(len(pages), 1):
+            logger.warning(
+                "text_extraction_low_trying_ocr",
+                filename=filename,
+                total_chars=total_chars,
+            )
+            ocr_pages, ocr_parser = self._try_ocr(content)
+            ocr_chars = sum(p.char_count for p in ocr_pages)
+            if ocr_chars > total_chars:
+                pages = ocr_pages
+                parser_used = ocr_parser
+                total_chars = ocr_chars
+
         doc = ParsedDocument(
             filename=filename,
             pages=pages,
@@ -103,6 +121,34 @@ class DocumentParser:
         except Exception as exc:
             logger.error("pdfplumber_failed", error=str(exc))
             return [], "pdfplumber_failed"
+
+    def _try_ocr(self, content: bytes) -> tuple[list[ParsedPage], str]:
+        try:
+            import fitz  # pymupdf
+            import pytesseract
+            from PIL import Image
+
+            pytesseract.pytesseract.tesseract_cmd = _TESSERACT_CMD
+
+            pdf = fitz.open(stream=content, filetype="pdf")
+            pages = []
+            for i, page in enumerate(pdf):
+                # Render page at 2x zoom for better OCR accuracy
+                mat = fitz.Matrix(2.0, 2.0)
+                pix = page.get_pixmap(matrix=mat)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                text = pytesseract.image_to_string(img, lang="eng")
+                text = self._clean_text(text)
+                pages.append(ParsedPage(page_num=i + 1, text=text, char_count=len(text)))
+            pdf.close()
+            logger.info("ocr_extraction_complete", page_count=len(pages))
+            return pages, "tesseract_ocr"
+        except ImportError:
+            logger.warning("ocr_unavailable", hint="pip install pytesseract pymupdf pillow")
+            return [], "ocr_unavailable"
+        except Exception as exc:
+            logger.error("ocr_failed", error=str(exc))
+            return [], "ocr_failed"
 
     # ── Text cleaning ─────────────────────────────────────────────────────────
 

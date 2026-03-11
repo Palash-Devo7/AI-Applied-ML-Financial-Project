@@ -42,10 +42,11 @@ class IngestionService:
         content: bytes,
         filename: str,
         overrides: Optional[dict] = None,
+        document_id: Optional[str] = None,
     ) -> UploadResponse:
         """Ingest a single PDF document end-to-end."""
         t0 = time.perf_counter()
-        document_id = str(ULID())
+        document_id = document_id or str(ULID())
         overrides = overrides or {}
 
         logger.info("ingestion_started", document_id=document_id, filename=filename)
