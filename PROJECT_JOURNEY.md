@@ -4,7 +4,7 @@
 **Project:** AI-Applied-ML-Financial-Project
 **GitHub:** https://github.com/Palash-Devo7/AI-Applied-ML-Financial-Project
 **Duration:** March 2026 (ongoing)
-**Stack:** Python 3.14 · FastAPI · FinBERT · ChromaDB · Groq (LLaMA 3.3 70B) · Tesseract OCR
+**Stack:** Python 3.14 · FastAPI · FinBERT · ChromaDB · Groq (LLaMA 3.3 70B) · Tesseract OCR · Streamlit
 
 ---
 
@@ -18,12 +18,13 @@
 6. [LLM Provider Journey](#6-llm-provider-journey)
 7. [OCR Journey](#7-ocr-journey)
 8. [Retrieval Quality Issues & Fixes](#8-retrieval-quality-issues--fixes)
-9. [Production Readiness Checklist](#9-production-readiness-checklist)
-10. [Current System Capabilities](#10-current-system-capabilities)
-11. [File Structure](#11-file-structure)
-12. [Key Design Patterns](#12-key-design-patterns)
-13. [Lessons Learned](#13-lessons-learned)
-14. [What's Next (Phase 2)](#14-whats-next-phase-2)
+9. [Streamlit UI Layer](#9-streamlit-ui-layer)
+10. [Production Readiness Checklist](#10-production-readiness-checklist)
+11. [Current System Capabilities](#11-current-system-capabilities)
+12. [File Structure](#12-file-structure)
+13. [Key Design Patterns](#13-key-design-patterns)
+14. [Lessons Learned](#14-lessons-learned)
+15. [What's Next (Phase 2)](#15-whats-next-phase-2)
 
 ---
 
@@ -277,6 +278,54 @@ See [Section 6](#6-llm-provider-journey) for full technical details.
 
 ---
 
+### Phase 8: Streamlit UI Layer (Session 4)
+
+**Motivation:** The system was API-only (Swagger UI). A proper interface was needed to make the tool usable by non-technical analysts.
+
+**Choice:** Streamlit over React/Next.js — pure Python, no HTML/CSS/JS, built-in file uploader and chat interface, deployable in hours.
+
+**Initial build:** Three-page dark-themed app:
+- 💬 Chat — natural language Q&A with company filter and source citations
+- 📁 Upload — PDF drag & drop with metadata form and job status tracker
+- 🏢 Knowledge Base — company/document browser with stats and danger zone
+
+**Problems found immediately after first launch:**
+1. **Bland white UI** — default Streamlit theme looked unprofessional
+2. **Laggy** — API calls (`fetch_companies`, `fetch_collection_info`) ran on every page re-render
+3. **3+ second response delay** — LLM generated the full answer server-side before sending anything to UI
+
+**Fix 1 — Dark professional theme:** Full CSS override injected via `st.markdown()` — dark navy background (`#0f1117`), blue accent (`#3b82f6`), styled chat bubbles, source cards, metric tiles.
+
+**Fix 2 — Caching API calls:** Wrapped `fetch_companies()` and `fetch_collection_info()` with `@st.cache_data(ttl=30)` — eliminates repeated network calls on every render cycle.
+
+**Fix 3 — Streaming responses (biggest change):**
+
+Backend changes:
+- Added `stream_generate()` async generator to `GroqBackend` and `DeepSeekBackend` using `stream=True` in the OpenAI client
+- Added `stream_generate()` to `GenerationService` with graceful fallback for backends that don't support streaming
+- Added `POST /query/stream` FastAPI endpoint using `StreamingResponse` with Server-Sent Events (SSE) format
+
+SSE event format:
+```
+data: {"type": "meta", "query_type": "REVENUE", "chunk_count": 5, "sources": [...]}
+data: {"type": "token", "text": "Tata"}
+data: {"type": "token", "text": " Steel"}
+...
+data: {"type": "done"}
+```
+
+The `meta` event carries sources and query metadata and is sent **before** tokens start — so the UI knows context before the answer arrives.
+
+Frontend changes:
+- `stream_query()` generator in `ui/app.py` — opens SSE connection with `requests.post(..., stream=True)` and yields `(token, meta)` tuples
+- `st.write_stream()` consumes the generator and renders tokens as they arrive — identical UX to ChatGPT/Claude
+
+**Python 3.14 bug:** `nonlocal` inside a nested function within an `if` block is illegal in Python 3.14. Used a mutable `state = {}` dict instead to share data between the generator closure and outer scope.
+
+**Result:** First token appears in ~1 second (retrieval time). Answer streams word by word. Sources appear after streaming completes.
+
+---
+
 ## 5. Challenges & Solutions
 
 ### Challenge 1: Python 3.14 Compatibility
@@ -475,7 +524,94 @@ Question (raw text) → BM25 score over stored documents ───┘
 
 ---
 
-## 9. Production Readiness Checklist
+## 9. Streamlit UI Layer
+
+### Architecture
+
+```
+Browser (http://localhost:8501)
+        │
+   Streamlit UI (ui/app.py)
+        │  HTTP requests (requests library)
+        │  SSE stream (requests stream=True)
+        ▼
+FastAPI Backend (http://localhost:8000)
+```
+
+Two processes run independently. The UI is a thin client — all intelligence stays in the FastAPI backend.
+
+### Pages
+
+**💬 Chat**
+- Company filter dropdown (auto-populated from `/collections/companies`)
+- Top K slider (1-50, default 10)
+- Sources toggle
+- Chat history with message persistence via `st.session_state`
+- Streaming responses via `st.write_stream()`
+- Source cards shown after streaming with score, company, section, page number
+- Query metadata footer (query type, chunk count, latency)
+
+**📁 Upload**
+- PDF drag & drop via `st.file_uploader`
+- Metadata form: company (required), year, ticker, report type, sector
+- Calls `POST /documents/upload` → returns immediately (background task)
+- Job status panel showing all uploads with live status (🔄/✅/❌)
+- Refresh button to poll job completion
+
+**🏢 Knowledge Base**
+- Three metrics: total chunks, companies, documents (ingested/total)
+- Company cards with chunk counts
+- Document list with full metadata
+- Danger zone: delete entire collection (requires typing "DELETE")
+
+### Streaming Implementation
+
+```python
+# Backend: SSE endpoint (query.py)
+async def event_generator():
+    # 1. Retrieve (fast) — happens before first token
+    chunks = await retrieval.hybrid_query(...)
+    context, used_chunks = mcp.assemble_context(chunks)
+
+    # 2. Send metadata event first
+    yield f"data: {json.dumps({'type': 'meta', 'sources': [...], ...})}\n\n"
+
+    # 3. Stream tokens
+    async for token in generation.stream_generate(...):
+        yield f"data: {json.dumps({'type': 'token', 'text': token})}\n\n"
+
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+# Frontend: consume stream (app.py)
+def stream_query(payload):
+    with requests.post("/query/stream", json=payload, stream=True) as resp:
+        for line in resp.iter_lines():
+            data = json.loads(line[6:])          # strip "data: "
+            if data["type"] == "token":
+                yield data["text"], meta
+
+st.write_stream(token_generator())               # renders tokens live
+```
+
+### Performance improvements
+
+| Metric | Before | After |
+|---|---|---|
+| Time to first token | 3-5 seconds | ~1 second |
+| Full answer display | 3-5 seconds | Streams progressively |
+| Page render API calls | Every render (laggy) | Cached 30s TTL |
+| Theme | Default white | Dark navy professional |
+
+### Known Streamlit limitations
+
+- **No WebSocket** — SSE over HTTP polling, minor overhead vs native WebSocket
+- **Session state** — Chat history lives in browser session, lost on refresh
+- **Single thread** — Streamlit re-runs entire script on interaction; state management via `st.session_state`
+- **`nonlocal` in Python 3.14** — Can't use `nonlocal` in nested functions inside `if` blocks; workaround: mutable `state = {}` dict
+
+---
+
+## 10. Production Readiness Checklist
 
 ### Must-have before launch
 
@@ -508,7 +644,7 @@ Question (raw text) → BM25 score over stored documents ───┘
 
 ---
 
-## 10. Current System Capabilities
+## 11. Current System Capabilities
 
 ### What works today
 
@@ -517,11 +653,13 @@ Question (raw text) → BM25 score over stored documents ───┘
 ✅ Async background ingestion (no timeout for large files)
 ✅ Query ingestion job status
 ✅ Natural language Q&A over financial documents
+✅ Streaming responses — token-by-token like ChatGPT
 ✅ Company-level filtering (ask about specific company only)
 ✅ Hybrid retrieval (vector + BM25 + RRF)
 ✅ 6 query types: RISK, REVENUE, MACRO, COMPARATIVE, HISTORICAL, GENERAL
-✅ Source citations in every answer
+✅ Source citations in every answer with score + page reference
 ✅ Multiple LLM backends (Groq/DeepSeek/Claude) switchable via `.env`
+✅ Streamlit UI — dark themed, three pages, no frontend code required
 ✅ Prometheus metrics + Grafana dashboards
 ✅ JSON structured logging
 ✅ See stored companies via `/collections/companies`
@@ -534,6 +672,7 @@ Question (raw text) → BM25 score over stored documents ───┘
 ❌ No authentication — anyone can access the API
 ❌ No rate limiting
 ❌ OCR jobs lost on server restart (in-memory job tracker)
+❌ Chat history lost on Streamlit page refresh
 ❌ Phase 2 fine-tuning not implemented
 
 ---
@@ -589,12 +728,17 @@ finance-rag/
 ├── monitoring/
 │   ├── prometheus.yml              # Scrape config
 │   └── grafana_dashboard.json      # Pre-built dashboard
+├── ui/
+│   ├── app.py                      # Streamlit UI — Chat, Upload, Knowledge Base pages
+│   └── .streamlit/
+│       └── config.toml             # Dark theme, port 8501, no telemetry
 ├── data/
 │   └── chroma_db/                  # Persistent vector store (gitignored)
 ├── .env                            # Active config (gitignored)
 ├── .env.example                    # Template for new setups
 ├── requirements.txt                # Production dependencies
 ├── requirements-dev.txt            # pytest, coverage, etc.
+├── PROJECT_JOURNEY.md              # This document
 └── README.md                       # Setup and usage guide
 ```
 
@@ -694,5 +838,5 @@ Once enough (question, answer) pairs are collected via production usage, fine-tu
 
 ---
 
-*Document generated: March 2026*
-*System version: 1.0.0*
+*Document last updated: March 2026*
+*System version: 1.1.0 (added Streamlit UI + streaming)*

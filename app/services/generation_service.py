@@ -111,6 +111,29 @@ class DeepSeekBackend:
         )
         return answer, usage
 
+    async def stream_generate(
+        self,
+        question: str,
+        context: str,
+        query_type: str = "GENERAL",
+    ):
+        """Stream tokens from DeepSeek API as an async generator."""
+        user_prompt = build_user_prompt(question=question, context=context, query_type=query_type)
+        stream = await self._client.chat.completions.create(
+            model=self.model,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            stream=True,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        async for chunk in stream:
+            token = chunk.choices[0].delta.content
+            if token:
+                yield token
+
 
 # ── Groq backend (free tier, set LLM_PROVIDER=groq) ──────────────────────────
 
@@ -180,6 +203,29 @@ class GroqBackend:
             latency_s=round(elapsed, 2),
         )
         return answer, usage
+
+    async def stream_generate(
+        self,
+        question: str,
+        context: str,
+        query_type: str = "GENERAL",
+    ):
+        """Stream tokens from Groq API as an async generator."""
+        user_prompt = build_user_prompt(question=question, context=context, query_type=query_type)
+        stream = await self._client.chat.completions.create(
+            model=self.model,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            stream=True,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        async for chunk in stream:
+            token = chunk.choices[0].delta.content
+            if token:
+                yield token
 
 
 # ── Claude backend (optional, set LLM_PROVIDER=claude) ───────────────────────
@@ -336,6 +382,21 @@ class GenerationService:
             await self._log_training_record(question, context, answer)
 
         return answer, usage
+
+    async def stream_generate(
+        self,
+        question: str,
+        context: str,
+        query_type: str = "GENERAL",
+    ):
+        """Stream tokens as async generator. Falls back to non-streaming if backend doesn't support it."""
+        if hasattr(self._backend, "stream_generate"):
+            async for token in self._backend.stream_generate(question, context, query_type):
+                yield token
+        else:
+            # Fallback: generate full answer then yield it at once
+            answer, _ = await self._backend.generate(question, context, query_type)
+            yield answer
 
     async def _log_training_record(
         self, question: str, context: str, answer: str
