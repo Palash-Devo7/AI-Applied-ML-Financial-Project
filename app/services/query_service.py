@@ -75,6 +75,18 @@ class QueryService:
             # 5. Assemble context
             context_str, used_chunks = self._mcp.assemble_context(chunks)
 
+            # 5b. Enrich with structured financial data if a company is known
+            company_name = request.company or entities.get("company")
+            if company_name:
+                try:
+                    from app.data.financial_db import build_financial_context
+                    structured = build_financial_context(company_name)
+                    if structured:
+                        context_str = structured + context_str
+                        logger.debug("structured_context_added", company=company_name)
+                except Exception as e:
+                    logger.warning("structured_context_failed", error=str(e))
+
             # 6. Generate answer
             if not context_str:
                 answer = (

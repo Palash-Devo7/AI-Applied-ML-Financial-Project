@@ -83,6 +83,17 @@ async def query_stream(
             )
             context_str, used_chunks = service._mcp.assemble_context(chunks)
 
+            # Enrich with structured financial data (SQLite) if company is known
+            company_name = request.company or entities.get("company")
+            if company_name:
+                try:
+                    from app.data.financial_db import build_financial_context
+                    structured = build_financial_context(company_name)
+                    if structured:
+                        context_str = structured + context_str
+                except Exception as e:
+                    logger.warning("structured_context_failed", error=str(e))
+
             # Send metadata first so UI can show sources immediately
             sources = [
                 {

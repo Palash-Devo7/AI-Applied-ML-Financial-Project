@@ -4,7 +4,7 @@
 **Project:** AI-Applied-ML-Financial-Project
 **GitHub:** https://github.com/Palash-Devo7/AI-Applied-ML-Financial-Project
 **Duration:** March 2026 (ongoing)
-**Stack:** Python 3.14 · FastAPI · FinBERT · ChromaDB · Groq (LLaMA 3.3 70B) · Tesseract OCR · Streamlit
+**Stack:** Python 3.14 · FastAPI · FinBERT · ChromaDB · Groq (LLaMA 3.3 70B) · Tesseract OCR · Streamlit · yfinance · SQLite
 
 ---
 
@@ -19,12 +19,14 @@
 7. [OCR Journey](#7-ocr-journey)
 8. [Retrieval Quality Issues & Fixes](#8-retrieval-quality-issues--fixes)
 9. [Streamlit UI Layer](#9-streamlit-ui-layer)
-10. [Production Readiness Checklist](#10-production-readiness-checklist)
-11. [Current System Capabilities](#11-current-system-capabilities)
-12. [File Structure](#12-file-structure)
-13. [Key Design Patterns](#13-key-design-patterns)
-14. [Lessons Learned](#14-lessons-learned)
-15. [What's Next (Phase 2)](#15-whats-next-phase-2)
+10. [Financial Forecasting Vision](#10-financial-forecasting-vision)
+11. [Phase A: Historical Data Layer](#11-phase-a-historical-data-layer)
+12. [Production Readiness Checklist](#12-production-readiness-checklist)
+13. [Current System Capabilities](#13-current-system-capabilities)
+14. [File Structure](#14-file-structure)
+15. [Key Design Patterns](#15-key-design-patterns)
+16. [Lessons Learned](#16-lessons-learned)
+17. [What's Next (Phase B onwards)](#17-whats-next-phase-b-onwards)
 
 ---
 
@@ -611,7 +613,142 @@ st.write_stream(token_generator())               # renders tokens live
 
 ---
 
-## 10. Production Readiness Checklist
+## 10. Financial Forecasting Vision
+
+### Inspiration: MiroFish
+
+During Session 5, we studied [MiroFish](https://github.com/666ghj/MiroFish) — a swarm intelligence prediction engine with 26,500+ GitHub stars. It spawns thousands of autonomous agents with persistent memory to simulate outcomes from seed data (news, financial signals, policy docs).
+
+**Key insight:** MiroFish uses the same underlying ingredients we can use — OASIS (Apache 2.0), Zep Cloud (free tier), OpenAI-compatible SDK. MiroFish itself is AGPL-3.0 (cannot be used in a product without open-sourcing everything), but we can build the same architecture independently.
+
+### Our Forecasting Roadmap
+
+Rather than generic simulation, we build a **financially-tuned forecasting engine** in three phases:
+
+```
+Phase A — Historical Data Layer (COMPLETE ✅)
+  Real quantitative data (revenue, EPS, stock prices) from yfinance
+  Structured SQLite DB alongside ChromaDB vector store
+  Auto-injected into every RAG query as grounding context
+
+Phase B — Multi-Agent Forecasting (NEXT)
+  4-5 specialist analyst agents (bull, bear, macro, sector, quant)
+  Each sees the same context, produces independent forecast
+  Synthesis agent combines views into final structured report
+  New endpoint: POST /forecast/event
+
+Phase C — GraphRAG (FUTURE)
+  Knowledge graph of company relationships (competitors, suppliers, sectors)
+  Graph traversal for richer, more precise context assembly
+  Libraries: NetworkX (local) or Neo4j (scale)
+```
+
+### Why Sequential Phases Matter
+
+```
+Without Phase A:
+  Agent: "Historically, steel dumping causes margin compression"
+  (generic, no numbers)
+
+With Phase A:
+  Agent: "In FY2024 Tata Steel posted a net loss of ₹4,437 Cr.
+          FY2022 was the peak at ₹40,154 Cr net income.
+          Stock fell from ₹216 to ₹122 over the past year."
+  (specific, credible, useful for forecasting)
+```
+
+---
+
+## 11. Phase A: Historical Data Layer
+
+**Completed:** Session 5 (March 2026)
+
+### What was built
+
+3 new files, 3 modified files:
+
+| File | Purpose |
+|---|---|
+| `app/data/financial_db.py` | SQLite manager — 4 tables: financials, stock prices, events, ticker map |
+| `app/services/market_data_service.py` | yfinance integration — fetch annual/quarterly financials + OHLCV prices |
+| `app/routers/market_data.py` | REST API — fetch, query, and manage market data + events |
+
+**Modified:**
+- `app/services/query_service.py` — enriches RAG context with structured financial table
+- `app/routers/query.py` — same enrichment added to streaming endpoint
+- `app/main.py` — initialises SQLite DB on startup, registers market_data router
+
+### Database Schema
+
+```sql
+company_financials  — revenue, net_income, ebitda, eps, assets, debt per year/quarter
+stock_prices        — OHLCV daily prices per ticker
+events              — manually logged financial events with impact scores (-1 to +1)
+ticker_map          — company name → exchange ticker (e.g. "Tata Steel" → "TATASTEEL.NS")
+```
+
+### How context enrichment works
+
+```
+User query: "What was Tata Steel's revenue trend?"
+
+Step 1: ChromaDB retrieves PDF chunks (qualitative — management commentary, risks)
+Step 2: SQLite looks up "Tata Steel" → fetches 5 years of financials + stock summary
+Step 3: Structured table prepended to LLM context:
+
+=== STRUCTURED FINANCIAL DATA: TATA STEEL ===
+ANNUAL FINANCIALS:
+Year     Revenue         Net Income      EBITDA          EPS     Net Margin
+2025     216840Cr        3420Cr          ...             ...     1.6%
+2024     227296Cr        -4437Cr (LOSS)  ...             ...     -1.9%
+2023     241636Cr        8760Cr          ...             ...     3.6%
+2022     242326Cr        40154Cr         ...             ...     16.6%
+
+STOCK (TATASTEEL.NS):
+  Latest close : ₹183.01 (2026-03-13)
+  52-week range: ₹122.44 – ₹216.45
+=== END STRUCTURED DATA ===
+
+Step 4: LLM answers with real numbers, not just PDF text
+```
+
+### New API endpoints
+
+```
+POST /market/fetch/sync    — fetch financials + prices for a ticker (waits for completion)
+POST /market/fetch         — same but background (returns immediately)
+GET  /market/financials/{company}       — get annual history
+GET  /market/financials/{company}/quarterly
+GET  /market/stock/{ticker}             — OHLCV history
+GET  /market/stock/{ticker}/summary     — 52-week range + latest close
+POST /market/events                     — manually log a financial event
+GET  /market/events/{company}           — get event history
+GET  /market/events/similar/{type}      — find analogous events across companies
+GET  /market/tickers                    — list all registered company→ticker mappings
+```
+
+### Tata Steel data loaded (verified)
+
+```
+Annual records: 5
+2025  Revenue: ₹2.17L Cr   Net Income: ₹3,420 Cr
+2024  Revenue: ₹2.27L Cr   Net Income: -₹4,437 Cr  ← Net loss year
+2023  Revenue: ₹2.42L Cr   Net Income: ₹8,760 Cr
+2022  Revenue: ₹2.42L Cr   Net Income: ₹40,154 Cr  ← Peak profit year
+2021  No data (yfinance gap)
+
+Stock: ₹183 latest · 52-week ₹122–₹216
+```
+
+### Bug found and fixed
+
+The streaming endpoint (`POST /query/stream`) had its own inline pipeline that bypassed `query_service.py`. The structured context enrichment was added to `query_service.py` but the UI uses the stream endpoint — so the fix had to be applied to `query.py` as well.
+
+**Lesson:** When you have two code paths doing the same thing (query vs stream), both must be updated. Consider refactoring into a shared `_build_context()` helper in Phase B.
+
+---
+
+
 
 ### Must-have before launch
 
@@ -659,11 +796,14 @@ st.write_stream(token_generator())               # renders tokens live
 ✅ 6 query types: RISK, REVENUE, MACRO, COMPARATIVE, HISTORICAL, GENERAL
 ✅ Source citations in every answer with score + page reference
 ✅ Multiple LLM backends (Groq/DeepSeek/Claude) switchable via `.env`
-✅ Streamlit UI — dark themed, three pages, no frontend code required
+✅ Streamlit UI — industrial dark theme, three pages, streaming chat
 ✅ Prometheus metrics + Grafana dashboards
 ✅ JSON structured logging
-✅ See stored companies via `/collections/companies`
-✅ Check collection size via `/collections`
+✅ Historical financials from yfinance (revenue, EPS, net income, assets)
+✅ Stock price history + 52-week summary per ticker
+✅ Structured financial data auto-injected into every RAG query
+✅ Manual event logging (earnings, macro events, regulatory changes)
+✅ Analogous event lookup across companies for forecasting
 
 ### What doesn't work yet
 
@@ -673,6 +813,8 @@ st.write_stream(token_generator())               # renders tokens live
 ❌ No rate limiting
 ❌ OCR jobs lost on server restart (in-memory job tracker)
 ❌ Chat history lost on Streamlit page refresh
+❌ Multi-agent forecasting not yet built (Phase B)
+❌ GraphRAG not yet built (Phase C)
 ❌ Phase 2 fine-tuning not implemented
 
 ---
@@ -706,17 +848,21 @@ finance-rag/
 │   │   │   └── model_registry.py   # Stub: model versioning
 │   │   └── evaluation/
 │   │       └── rag_evaluator.py    # Stub: RAGAS metrics evaluation
+│   ├── data/
+│   │   └── financial_db.py         # SQLite manager — financials, prices, events, ticker map
 │   ├── routers/
 │   │   ├── health.py               # GET /health
 │   │   ├── ingestion.py            # POST /documents/upload, GET /documents/{id}/status
-│   │   ├── query.py                # POST /query
-│   │   └── collections.py          # GET /collections, /collections/companies
+│   │   ├── query.py                # POST /query, POST /query/stream (SSE)
+│   │   ├── collections.py          # GET /collections, /collections/companies
+│   │   └── market_data.py          # GET/POST /market/* — financials, stock, events
 │   └── services/
 │       ├── embedding_service.py    # FinBERT inference, ThreadPoolExecutor
 │       ├── generation_service.py   # ModelBackend Protocol, Groq/DeepSeek/Claude
 │       ├── ingestion_service.py    # parse → chunk → embed → upsert pipeline
+│       ├── market_data_service.py  # yfinance integration, async wrappers
 │       ├── mcp_service.py          # Classify, extract entities, build filters, assemble context
-│       ├── query_service.py        # End-to-end query orchestration
+│       ├── query_service.py        # End-to-end query orchestration + structured context enrichment
 │       └── retrieval_service.py    # Hybrid vector + BM25 + RRF
 ├── tests/
 │   ├── conftest.py                 # Shared fixtures, mocks
@@ -815,14 +961,72 @@ Sits between retrieval and generation:
 
 ---
 
-## 14. What's Next (Phase 2)
+## 17. What's Next (Phase B onwards)
+
+### Phase B — Multi-Agent Forecasting
+
+The next major feature. Instead of one LLM answering, 4-5 specialist agents each analyze the same context independently, then a synthesis agent combines their views.
+
+**Agents planned:**
+
+| Agent | Role | Focus |
+|---|---|---|
+| Bull Analyst | Optimistic equity analyst | Upside scenarios, growth catalysts |
+| Bear Analyst | Risk-focused analyst | Downside risks, margin pressure |
+| Macro Analyst | Macroeconomist | Sector/economy impact, FX effects |
+| Sector Analyst | Industry specialist | Competitive dynamics, peers |
+| Quant Analyst | Quantitative analyst | Historical patterns, statistical analogies |
+
+**New endpoint:** `POST /forecast/event`
+```json
+{
+  "company": "Tata Steel",
+  "event": "China increases steel export quota by 30%",
+  "horizon": "12 months"
+}
+```
+
+**Output:**
+```
+Bull View:    Domestic demand shields revenue, anti-dumping duties likely... +5-8% upside
+Bear View:    Global price war, EBITDA margin compression of 300-400bps...
+Macro View:   USD/INR movement amplifies raw material cost...
+Synthesis:    High probability of short-term pressure (6-12 months).
+              Historical analog: 2015 steel crisis — recovery took 18 months.
+```
+
+**New Streamlit tab:** FORECAST — event input → animated agent thinking → structured report
+
+---
+
+### Phase C — GraphRAG
+
+Replace flat vector search with a knowledge graph so the system understands **relationships between companies, sectors, and events**.
+
+```
+"Tata Steel"
+  ├── competes_with → JSW Steel, SAIL, ArcelorMittal
+  ├── supplies_to   → Auto sector, Infrastructure
+  ├── exposed_to    → Iron ore prices, Coking coal, EU carbon tax
+  └── parent_of     → Tata Steel UK, Tata Steel Netherlands
+```
+
+When event = "EU Carbon Border Tax increases":
+- Graph finds: Tata Steel UK is most exposed
+- Retrieves: UK operations financial data specifically
+- Much more precise than flat cosine search
+
+**Library:** NetworkX (pure Python, no extra infra) → Neo4j for production scale
+
+---
 
 ### Immediate priorities (pre-production)
 
 1. **API authentication** — Bearer token or API key middleware
 2. **Company name normalization** — Store and query in lowercase
-3. **Persistent job tracking** — Replace in-memory dict with Redis or SQLite
+3. **Persistent job tracking** — Replace in-memory dict with SQLite (already have it now)
 4. **Cloud OCR integration** — Google Document AI for financial tables
+5. **Shared context builder** — Refactor query vs stream endpoints to share `_build_context()` helper
 
 ### Phase 2: Fine-tuning (stubs ready)
 
@@ -834,9 +1038,7 @@ The infrastructure for fine-tuning is stubbed in `app/phase2/`:
 4. **Model registry** — `ModelRegistry` versions and serves fine-tuned models
 5. **Evaluation** — `RAGEvaluator` measures faithfulness, relevance, correctness using RAGAS metrics
 
-Once enough (question, answer) pairs are collected via production usage, fine-tuning would produce a model that understands Indian financial reporting conventions better than a general-purpose LLM.
-
 ---
 
 *Document last updated: March 2026*
-*System version: 1.1.0 (added Streamlit UI + streaming)*
+*System version: 1.2.0 (added historical data layer, yfinance, structured context enrichment)*

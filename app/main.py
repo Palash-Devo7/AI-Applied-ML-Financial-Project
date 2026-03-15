@@ -58,6 +58,14 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("mcp_service_init_failed", error=str(exc))
 
+    # Initialise structured financial database
+    try:
+        from app.data.financial_db import init_db
+        init_db()
+        logger.info("financial_db_initialised")
+    except Exception as exc:
+        logger.error("financial_db_init_failed", error=str(exc))
+
     logger.info("application_ready")
     yield
 
@@ -87,12 +95,13 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestLoggingMiddleware)
 
     # ── Routers ───────────────────────────────────────────────────────────────
-    from app.routers import collections, health, ingestion, query
+    from app.routers import collections, health, ingestion, market_data, query
 
     app.include_router(health.router)
     app.include_router(ingestion.router, prefix="/documents")
     app.include_router(query.router)
     app.include_router(collections.router)
+    app.include_router(market_data.router)
 
     # ── Exception handlers ────────────────────────────────────────────────────
     @app.exception_handler(Exception)
