@@ -1020,6 +1020,56 @@ When event = "EU Carbon Border Tax increases":
 
 ---
 
+### Phase D — Brokerage Integration
+
+Connect users' brokerage accounts to automatically load their portfolio into the RAG system.
+
+**Target brokers (India):**
+
+| Broker | API | Priority |
+|---|---|---|
+| Zerodha | Kite Connect API | First — most mature, best docs |
+| Upstox | Upstox API v2 | Second |
+| Angel One | SmartAPI | Third |
+
+**User flow:**
+```
+User clicks "Connect Zerodha"
+        │
+        └── OAuth redirect → Zerodha login
+                │
+                └── Access token returned
+                        │
+                        └── System auto-fetches:
+                            - Portfolio holdings (TATASTEEL, RELIANCE, etc.)
+                            - 5 years of financials for each via yfinance
+                            - Ingests available annual reports
+                            - Ready to answer cross-portfolio questions
+```
+
+**Key capability unlocked:**
+> "Which of my holdings is most at risk from rising interest rates?"
+> System answers using data from ALL holdings simultaneously.
+
+**Prerequisites before building:**
+- User authentication system (JWT/API keys)
+- Secure token storage (encrypted, never in plain text)
+- API approval from Zerodha (Kite Connect costs ₹2,000/month for dev)
+
+**Planned endpoints:**
+```
+POST /auth/brokerage/zerodha/connect   — initiate OAuth flow
+GET  /auth/brokerage/zerodha/callback  — handle OAuth callback
+GET  /portfolio/holdings               — fetch user's holdings
+POST /portfolio/sync                   — auto-ingest all holding companies
+GET  /portfolio/ask                    — query across entire portfolio
+```
+
+**Difficulty:** Medium-High
+**Dependencies:** Phase B complete, user auth system in place
+
+---
+
 ### Immediate priorities (pre-production)
 
 1. **API authentication** — Bearer token or API key middleware
