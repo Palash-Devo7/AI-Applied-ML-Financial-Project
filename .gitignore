@@ -7,6 +7,8 @@ data/chroma_db/
 data/sample_docs/
 data/training_data.jsonl
 data/datasets/
+data/financial_data.db
+*.db
 
 # Models (downloaded at runtime)
 models/
