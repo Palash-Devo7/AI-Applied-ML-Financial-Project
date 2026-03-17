@@ -77,9 +77,24 @@ def init_db() -> None:
             exchange TEXT DEFAULT 'NSE'
         );
 
+        CREATE TABLE IF NOT EXISTS company_registry (
+            company          TEXT PRIMARY KEY,
+            ticker           TEXT NOT NULL,
+            scrip_code       TEXT,
+            exchange         TEXT DEFAULT 'BSE',
+            status           TEXT DEFAULT 'pending',
+            loaded_at        TEXT,
+            docs_synced_at   TEXT,
+            prices_synced_at TEXT,
+            doc_count        INTEGER DEFAULT 0,
+            error_msg        TEXT,
+            created_at       TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_fin_company    ON company_financials(company);
         CREATE INDEX IF NOT EXISTS idx_price_ticker   ON stock_prices(ticker, date);
         CREATE INDEX IF NOT EXISTS idx_event_company  ON events(company, event_date);
+        CREATE INDEX IF NOT EXISTS idx_registry_ticker ON company_registry(ticker);
     """)
     conn.commit()
 
@@ -241,6 +256,68 @@ def search_similar_events(event_type: str, company: str = None, limit: int = 5) 
             "SELECT * FROM events WHERE event_type=? ORDER BY event_date DESC LIMIT ?",
             (event_type, limit),
         ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── Company registry ──────────────────────────────────────────────────────────
+
+def register_company(company: str, ticker: str, scrip_code: str = "") -> None:
+    conn = _get_conn()
+    conn.execute(
+        """INSERT INTO company_registry(company, ticker, scrip_code)
+           VALUES(?,?,?)
+           ON CONFLICT(company) DO UPDATE SET
+             ticker=excluded.ticker, scrip_code=excluded.scrip_code""",
+        (company, ticker, scrip_code),
+    )
+    conn.commit()
+
+
+def update_company_status(company: str, status: str, error_msg: str = "") -> None:
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    conn = _get_conn()
+    if status == "ready":
+        conn.execute(
+            "UPDATE company_registry SET status=?, loaded_at=?, error_msg=? WHERE company=?",
+            (status, now, error_msg, company),
+        )
+    else:
+        conn.execute(
+            "UPDATE company_registry SET status=?, error_msg=? WHERE company=?",
+            (status, error_msg, company),
+        )
+    conn.commit()
+
+
+def update_docs_synced(company: str, doc_count: int) -> None:
+    from datetime import datetime, timezone
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE company_registry SET docs_synced_at=?, doc_count=? WHERE company=?",
+        (datetime.now(timezone.utc).isoformat(), doc_count, company),
+    )
+    conn.commit()
+
+
+def get_company_registry(company: str) -> Optional[dict]:
+    row = _get_conn().execute(
+        "SELECT * FROM company_registry WHERE company=?", (company,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_registry_by_ticker(ticker: str) -> Optional[dict]:
+    row = _get_conn().execute(
+        "SELECT * FROM company_registry WHERE ticker=?", (ticker,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_registered_companies() -> list[dict]:
+    rows = _get_conn().execute(
+        "SELECT * FROM company_registry ORDER BY loaded_at DESC"
+    ).fetchall()
     return [dict(r) for r in rows]
 
 

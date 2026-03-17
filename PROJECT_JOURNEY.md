@@ -1092,3 +1092,134 @@ The infrastructure for fine-tuning is stubbed in `app/phase2/`:
 
 *Document last updated: March 2026*
 *System version: 1.2.0 (added historical data layer, yfinance, structured context enrichment)*
+
+---
+
+## 18. Phase B: Multi-Agent Forecasting
+
+**Completed: March 2026 | Version: 1.3.0**
+
+### What was built
+
+A parallel multi-agent forecasting engine triggered by a specific company event. Three analyst agents (Bull, Bear, Macro) run simultaneously via `asyncio.gather`, then a Synthesizer agent combines their views into a structured forecast.
+
+**Pipeline:**
+```
+POST /forecast/event
+        │
+        ├── Build context (SQLite financials + similar events + PDF chunks)
+        │
+        ├── asyncio.gather:
+        │     ├── Bull Agent   (optimistic, upside catalysts)
+        │     ├── Bear Agent   (pessimistic, downside risks)
+        │     └── Macro Agent  (macro/sector forces)
+        │
+        └── Synthesizer Agent
+              ├── BASE_CASE (most likely)
+              ├── BULL_CASE (optimistic)
+              ├── BEAR_CASE (pessimistic)
+              ├── CONFIDENCE (HIGH/MEDIUM/LOW)
+              ├── KEY_RISKS
+              └── KEY_CATALYSTS
+```
+
+**New files:**
+- `app/models/forecast.py` — ForecastRequest, ForecastResponse, AgentView models
+- `app/services/forecast_service.py` — multi-agent engine with regex-based output parsing
+- `app/routers/forecast.py` — POST /forecast/event endpoint
+
+**Modified files:**
+- `app/services/generation_service.py` — added `raw_generate(system, user)` to all backends (DeepSeek, Groq, Claude) enabling custom system prompts for agents
+- `app/main.py` — registered forecast router
+- `ui/app.py` — added FORECAST tab (4 tabs total: CHAT, FORECAST, DOCUMENTS, KNOWLEDGE BASE)
+
+**Cost design:** DeepSeek/Groq for agents (cheap), Claude only if configured. 4 LLM calls per forecast (3 parallel + 1 synthesis).
+
+---
+
+## 19. Phase B (cont): BSE Auto-Ingest + Provider Pattern
+
+**Completed: March 2026 | Version: 1.4.0**
+
+### The manual upload problem
+
+Every company required manual PDF uploads. Not scalable — 200 companies × 4 quarters = 800 PDFs/year.
+
+### Solution: BSE India package + provider abstraction
+
+Used `pip install bse` (unofficial BSE India API wrapper) to auto-fetch filings and financial data for any BSE-listed company.
+
+**Key discovery during research:**
+- PDF download requires session warmup: first GET `https://www.bseindia.com/` to get Akamai cookies, then download from `AttachLive/` URL
+- Without warmup: 403 Forbidden
+- With warmup: 200 OK, valid PDF
+
+**Provider pattern (future-proof):**
+```python
+class MarketDataProvider(Protocol):
+    def get_scrip_code(self, ticker) -> str
+    def get_financials(self, scrip_code) -> dict
+    def get_price(self, scrip_code) -> dict
+    def get_announcements(self, scrip_code, days_back) -> list[dict]
+    def download_pdf(self, attachment_name) -> bytes
+
+# Swap provider: change ONE file (bse_provider.py → stockinsights_provider.py)
+# Rest of codebase is untouched
+```
+
+**If BSE package breaks:** change `MARKET_DATA_PROVIDER=bse` to another provider in `.env`. Recovery time: ~2 hours.
+
+**Full auto-ingest flow:**
+```
+User types "TATASTEEL" in UI
+        ↓
+POST /companies/load (background task)
+        ↓
+BSEProvider.get_scrip_code("TATASTEEL") → "500470"
+        ↓
+Fetch financials → parse → upsert SQLite (revenue, margins, EPS)
+Fetch live price → upsert SQLite
+        ↓
+Fetch announcements (last 365 days) → filter:
+  - PDFFLAG == 1 (has PDF)
+  - CATEGORYNAME in [Results, Board Meeting, Annual Report, Investor Presentation]
+  - File size > 50KB (excludes tiny notice PDFs)
+  - Take most recent 6
+        ↓
+Download each PDF (session warmup → AttachLive URL)
+        ↓
+ingest_service.ingest(pdf_bytes, overrides={company, ticker, year}) → ChromaDB
+        ↓
+company_registry: status = "ready"
+```
+
+**New files:**
+- `app/services/providers/base.py` — MarketDataProvider Protocol
+- `app/services/providers/bse_provider.py` — BSE implementation
+- `app/services/company_loader.py` — orchestrates full company load
+- `app/routers/companies.py` — POST /companies/load, GET /companies/status/{ticker}, GET /companies/list
+
+**Modified files:**
+- `app/data/financial_db.py` — added company_registry table + 6 registry functions
+- `app/main.py` — registered companies router
+- `ui/app.py` — FORECAST tab now has "LOAD COMPANY DATA" expander with status table
+- `requirements.txt` — added `bse>=3.2.0`
+
+**BSE API test results:**
+| Feature | Status |
+|---|---|
+| getScripCode() | ✅ Working |
+| quote() — live price | ✅ Working |
+| resultsSnapshot() — financials | ✅ Working |
+| announcements() — filing metadata | ✅ Working |
+| PDF download (with session warmup) | ✅ Working |
+| resultCalendar() | ✅ Working |
+| lookup() | ❌ Bug in v3.2.0 — use getScripCode() instead |
+
+**Why not StockInsights API?**
+Evaluated StockInsights AI API (₹6,000/month for 5,000 calls). BSE package provides equivalent data for free. StockInsights only advantage is AI-generated summaries — not needed since the system generates its own analysis.
+
+---
+
+*Document last updated: March 2026*
+*System version: 1.4.0 (multi-agent forecasting + BSE auto-ingest + provider pattern)*

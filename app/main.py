@@ -95,13 +95,15 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestLoggingMiddleware)
 
     # ── Routers ───────────────────────────────────────────────────────────────
-    from app.routers import collections, health, ingestion, market_data, query
+    from app.routers import collections, companies, forecast, health, ingestion, market_data, query
 
     app.include_router(health.router)
     app.include_router(ingestion.router, prefix="/documents")
     app.include_router(query.router)
     app.include_router(collections.router)
     app.include_router(market_data.router)
+    app.include_router(forecast.router)
+    app.include_router(companies.router)
 
     # ── Exception handlers ────────────────────────────────────────────────────
     @app.exception_handler(Exception)

@@ -36,6 +36,10 @@ htmlcov/
 coverage.xml
 *.log
 
+# Claude Code context (local dev only)
+CLAUDE.md
+**/CLAUDE.md
+
 # IDE
 .vscode/
 .idea/

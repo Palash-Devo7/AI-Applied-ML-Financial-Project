@@ -781,7 +781,7 @@ def render_history_message(msg: dict, show_sources: bool):
 # Pages
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-tab_chat, tab_docs, tab_kb = st.tabs(["CHAT", "DOCUMENTS", "KNOWLEDGE BASE"])
+tab_chat, tab_forecast, tab_docs, tab_kb = st.tabs(["CHAT", "FORECAST", "DOCUMENTS", "KNOWLEDGE BASE"])
 
 
 # ── CHAT ──────────────────────────────────────────────────────────────────────
@@ -926,6 +926,304 @@ with tab_chat:
                 st.error(f"Stream error: {e}")
 
         st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ── FORECAST ──────────────────────────────────────────────────────────────────
+
+EVENT_TYPES = [
+    "earnings_miss", "earnings_beat", "management_change", "regulatory_action",
+    "acquisition", "macro_shock", "capacity_expansion", "debt_restructuring",
+    "sector_disruption", "geopolitical",
+]
+
+STANCE_COLOR = {
+    "BULLISH": ("var(--success)", "rgba(38,166,154,0.12)"),
+    "BEARISH": ("var(--danger)",  "rgba(239,83,80,0.12)"),
+    "NEUTRAL": ("var(--warning)", "rgba(245,158,11,0.12)"),
+}
+
+CONF_COLOR = {
+    "HIGH":   ("var(--success)", "rgba(38,166,154,0.15)"),
+    "MEDIUM": ("var(--warning)", "rgba(245,158,11,0.15)"),
+    "LOW":    ("var(--danger)",  "rgba(239,83,80,0.15)"),
+}
+
+
+def call_forecast(payload: dict) -> dict:
+    r = requests.post(f"{API_BASE}/forecast/event", json=payload, timeout=180)
+    r.raise_for_status()
+    return r.json()
+
+
+def load_company(ticker: str, company_name: str = "") -> dict:
+    payload = {"ticker": ticker}
+    if company_name:
+        payload["company_name"] = company_name
+    r = requests.post(f"{API_BASE}/companies/load", json=payload, timeout=15)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_company_status(ticker: str) -> dict:
+    try:
+        r = requests.get(f"{API_BASE}/companies/status/{ticker}", timeout=5)
+        return r.json() if r.ok else {}
+    except Exception:
+        return {}
+
+
+def fetch_registered_companies() -> list[dict]:
+    try:
+        r = requests.get(f"{API_BASE}/companies/list", timeout=5)
+        return r.json().get("companies", []) if r.ok else []
+    except Exception:
+        return []
+
+
+def render_agent_card(view: dict) -> str:
+    agent = view.get("agent", "").upper()
+    stance = view.get("stance", "NEUTRAL")
+    impact = view.get("estimated_impact", "")
+    reasoning = view.get("reasoning", "")
+    points = view.get("key_points", [])
+
+    color, bg = STANCE_COLOR.get(stance, STANCE_COLOR["NEUTRAL"])
+    points_html = "".join(f'<li style="margin-bottom:4px;font-size:12px;color:var(--text-secondary)">{p}</li>' for p in points)
+
+    return f"""
+    <div style="background:{bg};border:1px solid {color};border-radius:2px;padding:14px 16px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:0.1em;color:var(--text-muted)">{agent} ANALYST</span>
+        <span style="font-family:var(--font-mono);font-size:11px;font-weight:700;color:{color}">{stance}</span>
+      </div>
+      <div style="font-family:var(--font-mono);font-size:12px;color:{color};margin-bottom:10px;">{impact}</div>
+      <ul style="padding-left:16px;margin:0 0 10px;">{points_html}</ul>
+      <div style="font-size:12px;color:var(--text-secondary);line-height:1.5;border-top:1px solid var(--border);padding-top:8px;">{reasoning}</div>
+    </div>
+    """
+
+
+def render_case_block(label: str, text: str, color: str, bg: str) -> str:
+    return f"""
+    <div style="background:{bg};border-left:3px solid {color};border-radius:0 2px 2px 0;padding:12px 14px;margin-bottom:8px;">
+      <div style="font-family:var(--font-mono);font-size:10px;font-weight:600;color:{color};letter-spacing:0.12em;margin-bottom:6px;">{label}</div>
+      <div style="font-size:13px;color:var(--text-primary);line-height:1.6;">{text or "—"}</div>
+    </div>
+    """
+
+
+with tab_forecast:
+    st.markdown('<div class="content-pad">', unsafe_allow_html=True)
+
+    if not server_ok:
+        st.error("API offline.")
+    else:
+        # ── Company Loader ──
+        registered = fetch_registered_companies()
+        ready_companies = [c["company"] for c in registered if c.get("status") == "ready"]
+
+        with st.expander("LOAD COMPANY DATA  ( BSE Auto-Fetch )", expanded=not ready_companies):
+            lc1, lc2, lc3 = st.columns([1, 1, 1])
+            with lc1:
+                st.markdown('<div class="field-label">BSE Ticker</div>', unsafe_allow_html=True)
+                load_ticker = st.text_input("load_ticker", placeholder="e.g. TATASTEEL", label_visibility="collapsed")
+            with lc2:
+                st.markdown('<div class="field-label">Display Name (optional)</div>', unsafe_allow_html=True)
+                load_name = st.text_input("load_name", placeholder="e.g. Tata Steel", label_visibility="collapsed")
+            with lc3:
+                st.markdown("<br>", unsafe_allow_html=True)
+                do_load = st.button("FETCH & INGEST", use_container_width=True)
+
+            if do_load and load_ticker.strip():
+                result = load_company(load_ticker.strip(), load_name.strip())
+                if result.get("status") == "loading":
+                    st.info(f"Loading `{load_ticker.upper()}` in background. Check status below.")
+                elif result.get("status") == "ready":
+                    st.success(f"`{result.get('company')}` already loaded.")
+
+            # Status table
+            if registered:
+                STATUS_BADGE = {
+                    "ready":   '<span class="badge badge-done">READY</span>',
+                    "loading": '<span class="badge badge-proc">LOADING</span>',
+                    "failed":  '<span class="badge badge-fail">FAILED</span>',
+                    "pending": '<span class="badge badge-proc">PENDING</span>',
+                }
+                rows = ""
+                for c in registered:
+                    badge = STATUS_BADGE.get(c.get("status", ""), "")
+                    rows += f"<tr><td>{c['company']}</td><td>{c['ticker']}</td><td>{badge}</td><td style='color:var(--accent)'>{c.get('doc_count',0)}</td></tr>"
+                st.markdown(
+                    f'<table class="jobs-table" style="margin-top:8px;"><thead><tr><th>COMPANY</th><th>TICKER</th><th>STATUS</th><th>DOCS</th></tr></thead><tbody>{rows}</tbody></table>',
+                    unsafe_allow_html=True,
+                )
+
+        st.markdown('<div style="border-bottom:1px solid var(--border);margin:12px 0;"></div>', unsafe_allow_html=True)
+
+        col_form, col_result = st.columns([1, 1.4])
+
+        with col_form:
+            st.markdown('<div class="field-label">Event Forecast</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<p style="font-size:12px;color:var(--text-secondary);margin-bottom:16px;">'
+                'Describe an event. Three analyst agents (Bull, Bear, Macro) analyze it in parallel '
+                'and synthesize a structured forecast.'
+                '</p>',
+                unsafe_allow_html=True,
+            )
+
+            with st.form("forecast_form"):
+                st.markdown('<div class="field-label">Company <span class="field-req">*</span></div>', unsafe_allow_html=True)
+                all_forecast_companies = sorted(set(companies + ready_companies)) or [""]
+                fc_company = st.selectbox(
+                    "fc_company",
+                    options=all_forecast_companies,
+                    label_visibility="collapsed",
+                )
+
+                st.markdown('<div class="field-label">Event Type <span class="field-req">*</span></div>', unsafe_allow_html=True)
+                fc_event_type = st.selectbox(
+                    "fc_event_type",
+                    options=EVENT_TYPES,
+                    label_visibility="collapsed",
+                )
+
+                st.markdown('<div class="field-label">Event Description <span class="field-req">*</span></div>', unsafe_allow_html=True)
+                fc_event_desc = st.text_area(
+                    "fc_event_desc",
+                    placeholder="e.g. Company missed Q3 earnings by 18%, revenue down 12% YoY due to weak domestic steel demand and rising input costs.",
+                    height=110,
+                    label_visibility="collapsed",
+                )
+
+                st.markdown('<div class="field-label">Forecast Horizon (days)</div>', unsafe_allow_html=True)
+                fc_horizon = st.slider(
+                    "fc_horizon", min_value=30, max_value=365, value=90, step=30,
+                    label_visibility="collapsed",
+                )
+
+                fc_submitted = st.form_submit_button("RUN FORECAST", type="primary", use_container_width=True)
+
+        with col_result:
+            if "forecast_result" not in st.session_state:
+                st.session_state.forecast_result = None
+
+            if fc_submitted:
+                if not fc_event_desc.strip():
+                    st.error("Event description is required.")
+                elif not fc_company:
+                    st.error("Select a company first.")
+                else:
+                    with st.spinner("Running 3 analyst agents in parallel…"):
+                        try:
+                            result = call_forecast({
+                                "company": fc_company,
+                                "event_type": fc_event_type,
+                                "event_description": fc_event_desc,
+                                "horizon_days": fc_horizon,
+                            })
+                            st.session_state.forecast_result = result
+                        except Exception as e:
+                            st.error(f"Forecast failed: {e}")
+
+            result = st.session_state.forecast_result
+
+            if result:
+                confidence = result.get("confidence", "MEDIUM")
+                conf_color, conf_bg = CONF_COLOR.get(confidence, CONF_COLOR["MEDIUM"])
+
+                # Header
+                st.markdown(
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">'
+                    f'<span style="font-size:16px;font-weight:600;color:var(--text-primary)">{result["company"]}</span>'
+                    f'<span style="font-family:var(--font-mono);font-size:11px;font-weight:700;'
+                    f'color:{conf_color};background:{conf_bg};border:1px solid {conf_color};'
+                    f'border-radius:2px;padding:3px 10px;">{confidence} CONFIDENCE</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+                # Meta chips
+                chips = (
+                    f'<div class="resp-meta">'
+                    f'<span class="meta-chip hl">{result["event_type"].upper()}</span>'
+                    f'<span class="meta-chip">{result["horizon_days"]}D HORIZON</span>'
+                    f'<span class="meta-chip">{result.get("total_tokens", 0):,} TOKENS</span>'
+                    f'<span class="meta-chip">{result.get("latency_ms", 0):.0f}ms</span>'
+                    f'</div>'
+                )
+                st.markdown(chips, unsafe_allow_html=True)
+                st.markdown('<div style="border-top:1px solid var(--border);margin:12px 0;"></div>', unsafe_allow_html=True)
+
+                # Agent views (3 columns)
+                views = {v["agent"]: v for v in result.get("agent_views", [])}
+                a1, a2, a3 = st.columns(3)
+                with a1:
+                    if "bull" in views:
+                        st.markdown(render_agent_card(views["bull"]), unsafe_allow_html=True)
+                with a2:
+                    if "bear" in views:
+                        st.markdown(render_agent_card(views["bear"]), unsafe_allow_html=True)
+                with a3:
+                    if "macro" in views:
+                        st.markdown(render_agent_card(views["macro"]), unsafe_allow_html=True)
+
+                st.markdown('<div style="border-top:1px solid var(--border);margin:16px 0 12px;"></div>', unsafe_allow_html=True)
+                st.markdown('<div class="field-label" style="margin-bottom:8px;">Synthesized Forecast</div>', unsafe_allow_html=True)
+
+                # Base / Bull / Bear cases
+                st.markdown(render_case_block("BASE CASE", result.get("base_case", ""), "var(--accent)", "var(--accent-dim)"), unsafe_allow_html=True)
+                st.markdown(render_case_block("BULL CASE", result.get("bull_case", ""), "var(--success)", "rgba(38,166,154,0.08)"), unsafe_allow_html=True)
+                st.markdown(render_case_block("BEAR CASE", result.get("bear_case", ""), "var(--danger)", "rgba(239,83,80,0.08)"), unsafe_allow_html=True)
+
+                # Risks & Catalysts
+                r_col, c_col = st.columns(2)
+                with r_col:
+                    st.markdown('<div class="field-label" style="margin-bottom:6px;">Key Risks</div>', unsafe_allow_html=True)
+                    risks = result.get("key_risks", [])
+                    if risks:
+                        risk_items = "".join(f'<li style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">{r}</li>' for r in risks)
+                        st.markdown(f'<ul style="padding-left:16px;margin:0;">{risk_items}</ul>', unsafe_allow_html=True)
+
+                with c_col:
+                    st.markdown('<div class="field-label" style="margin-bottom:6px;">Key Catalysts</div>', unsafe_allow_html=True)
+                    catalysts = result.get("key_catalysts", [])
+                    if catalysts:
+                        cat_items = "".join(f'<li style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">{c}</li>' for c in catalysts)
+                        st.markdown(f'<ul style="padding-left:16px;margin:0;">{cat_items}</ul>', unsafe_allow_html=True)
+
+                # Similar historical events
+                similar = result.get("similar_events", [])
+                if similar:
+                    st.markdown('<div style="border-top:1px solid var(--border);margin:16px 0 10px;"></div>', unsafe_allow_html=True)
+                    st.markdown('<div class="field-label" style="margin-bottom:8px;">Similar Historical Events Used</div>', unsafe_allow_html=True)
+                    rows = ""
+                    for ev in similar:
+                        rows += f"""
+                        <tr>
+                          <td>{ev.get("event_date","")}</td>
+                          <td>{ev.get("company","")}</td>
+                          <td>{ev.get("event_type","")}</td>
+                          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{ev.get("title","")}</td>
+                        </tr>
+                        """
+                    st.markdown(
+                        f'<table class="jobs-table"><thead><tr><th>DATE</th><th>COMPANY</th><th>TYPE</th><th>EVENT</th></tr></thead><tbody>{rows}</tbody></table>',
+                        unsafe_allow_html=True,
+                    )
+
+                # Forecast ID
+                st.markdown(
+                    f'<div style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-top:16px;">ID: {result.get("forecast_id","")}</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    '<div class="ctx-empty">Fill in the form and click<br>RUN FORECAST</div>',
+                    unsafe_allow_html=True,
+                )
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ── DOCUMENTS ─────────────────────────────────────────────────────────────────

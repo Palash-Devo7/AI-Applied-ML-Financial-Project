@@ -111,6 +111,19 @@ class DeepSeekBackend:
         )
         return answer, usage
 
+    async def raw_generate(self, system: str, user: str) -> tuple[str, int]:
+        """Generate with fully custom system + user prompts. Returns (text, total_tokens)."""
+        response = await self._client.chat.completions.create(
+            model=self.model,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        return response.choices[0].message.content or "", response.usage.total_tokens
+
     async def stream_generate(
         self,
         question: str,
@@ -203,6 +216,19 @@ class GroqBackend:
             latency_s=round(elapsed, 2),
         )
         return answer, usage
+
+    async def raw_generate(self, system: str, user: str) -> tuple[str, int]:
+        """Generate with fully custom system + user prompts. Returns (text, total_tokens)."""
+        response = await self._client.chat.completions.create(
+            model=self.model,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        return response.choices[0].message.content or "", response.usage.total_tokens
 
     async def stream_generate(
         self,
@@ -302,6 +328,20 @@ class ClaudeBackend:
         )
         return answer, usage
 
+    async def raw_generate(self, system: str, user: str) -> tuple[str, int]:
+        """Generate with fully custom system + user prompts. Returns (text, total_tokens)."""
+        import anthropic
+        message = await self._client.messages.create(
+            model=self.model,
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        text = message.content[0].text if message.content else ""
+        total = message.usage.input_tokens + message.usage.output_tokens
+        return text, total
+
 
 # ── Fine-tuned model stub backend (Phase 2) ───────────────────────────────────
 
@@ -382,6 +422,14 @@ class GenerationService:
             await self._log_training_record(question, context, answer)
 
         return answer, usage
+
+    async def raw_generate(self, system: str, user: str) -> tuple[str, int]:
+        """Generate with custom system + user prompts (used by forecast agents)."""
+        if hasattr(self._backend, "raw_generate"):
+            return await self._backend.raw_generate(system, user)
+        # Fallback: pack into standard generate
+        answer, usage = await self._backend.generate(user, "", "GENERAL")
+        return answer, usage.total_tokens
 
     async def stream_generate(
         self,
