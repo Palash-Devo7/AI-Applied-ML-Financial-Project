@@ -1,43 +1,40 @@
-"""Company loader — auto-fetches BSE data and ingests PDFs into the RAG pipeline.
+"""Company loader — resolves canonical name, fetches from BSE + yfinance, ingests PDFs.
 
 Flow per company:
-  1. Resolve ticker → scrip_code
-  2. Fetch financials → SQLite
-  3. Fetch relevant announcements → filter PDFs
-  4. Download + ingest PDFs into ChromaDB via existing IngestionService
-  5. Mark company as ready in company_registry
+  1. BSE: ticker → scrip_code → canonical name (from listSecurities Scrip_Name)
+  2. BSE: scrip_code → ISIN → Yahoo Finance search → yfinance ticker (e.g. TATASTEEL.NS)
+  3. BSE: recent financials (last 2Q + FY annual) → SQLite under canonical name
+  4. BSE: live price → SQLite
+  5. yfinance: 5yr annual + quarterly history + balance sheet → SQLite under canonical name
+  6. yfinance: 5yr daily price history → SQLite
+  7. BSE: announcements → filter → download PDFs → ChromaDB (tagged canonical name)
+  8. company_registry: status = ready
 """
 from __future__ import annotations
 
 import asyncio
 import structlog
-from functools import lru_cache
 
 from app.services.providers.bse_provider import BSEProvider
+from app.services.providers.yfinance_provider import YFinanceProvider
 
 logger = structlog.get_logger(__name__)
 
-MAX_PDFS = 6  # max PDFs to ingest per company load (most recent first)
-
-
-def _get_provider() -> BSEProvider:
-    """Swap provider here — change BSEProvider to any other implementation."""
-    return BSEProvider()
+MAX_PDFS = 6
 
 
 class CompanyLoader:
     def __init__(self, ingestion_service) -> None:
         self._ingestion = ingestion_service
-        self._provider = _get_provider()
+        self._bse       = BSEProvider()
+        self._yf        = YFinanceProvider()
 
     async def load(self, ticker: str, company_display_name: str | None = None) -> dict:
-        """
-        Full company load. Returns status dict.
-        Designed to run as a background task.
-        """
+        """Full company load. Designed to run as a background task."""
         from app.data.financial_db import (
             register_company, update_company_status,
-            update_docs_synced, upsert_financials, upsert_ticker,
+            update_docs_synced, update_prices_synced,
+            upsert_financials, upsert_stock_prices, upsert_ticker,
         )
 
         ticker = ticker.upper().strip()
@@ -45,33 +42,54 @@ class CompanyLoader:
 
         # 1. Resolve scrip code
         try:
-            scrip_code = await asyncio.to_thread(self._provider.get_scrip_code, ticker)
+            scrip_code = await asyncio.to_thread(self._bse.get_scrip_code, ticker)
         except Exception as exc:
             logger.error("scrip_code_failed", ticker=ticker, error=str(exc))
             return {"status": "failed", "error": f"Ticker not found on BSE: {ticker}"}
 
-        # 2. Get company name
+        # 2. Resolve canonical name (from BSE listSecurities Scrip_Name)
         try:
-            bse_name = await asyncio.to_thread(self._provider.get_company_name, scrip_code)
-            company = company_display_name or bse_name or ticker
+            canonical_name = await asyncio.to_thread(self._bse.get_canonical_name, scrip_code)
         except Exception:
-            company = company_display_name or ticker
+            canonical_name = company_display_name or ticker
+        company = company_display_name or canonical_name
 
-        # Register immediately so UI can show "loading" status
+        # 3. Resolve ISIN → yfinance ticker
+        yf_ticker = None
+        try:
+            isin = await asyncio.to_thread(self._bse.get_isin, scrip_code)
+            if isin:
+                yf_ticker = await asyncio.to_thread(self._bse.resolve_yfinance_ticker, isin)
+                if yf_ticker:
+                    logger.info("yfinance_ticker_resolved", company=company, isin=isin, yf_ticker=yf_ticker)
+        except Exception as exc:
+            logger.warning("isin_resolve_failed", company=company, error=str(exc))
+
+        # Register immediately so UI can show "loading"
         register_company(company, ticker, scrip_code)
         update_company_status(company, "loading")
+        upsert_ticker(company, ticker)
+        if yf_ticker:
+            upsert_ticker(company, yf_ticker)  # also register yfinance ticker for stock summary
 
         try:
-            # 3. Fetch financials → SQLite
-            await self._fetch_financials(company, ticker, scrip_code)
+            # 4. BSE recent financials
+            await self._fetch_bse_financials(company, ticker, scrip_code)
 
-            # 4. Fetch + ingest PDFs
+            # 5. BSE live price
+            await self._fetch_bse_price(company, ticker, scrip_code)
+            update_prices_synced(company)
+
+            # 6. yfinance historical financials + prices (if ticker resolved)
+            if yf_ticker:
+                await self._fetch_yfinance_data(company, yf_ticker)
+
+            # 7. PDFs → ChromaDB
             doc_count = await self._fetch_and_ingest_pdfs(company, ticker, scrip_code)
 
-            # 5. Mark ready
             update_docs_synced(company, doc_count)
             update_company_status(company, "ready")
-            logger.info("company_load_complete", company=company, docs=doc_count)
+            logger.info("company_load_complete", company=company, docs=doc_count, yf_ticker=yf_ticker)
             return {"status": "ready", "company": company, "doc_count": doc_count}
 
         except Exception as exc:
@@ -82,143 +100,131 @@ class CompanyLoader:
 
     # ── Private helpers ────────────────────────────────────────────────────────
 
-    async def _fetch_financials(self, company: str, ticker: str, scrip_code: str) -> None:
-        from app.data.financial_db import upsert_financials, upsert_ticker, upsert_stock_prices
-
-        # Register ticker mapping
+    async def _fetch_bse_financials(self, company: str, ticker: str, scrip_code: str) -> None:
+        from app.data.financial_db import upsert_financials, upsert_ticker
         upsert_ticker(company, ticker)
-
-        # Fetch results snapshot from BSE
         try:
-            snapshot = await asyncio.to_thread(self._provider.get_financials, scrip_code)
-            records = _parse_snapshot_to_records(company, ticker, snapshot)
+            records = await asyncio.to_thread(self._bse.get_financials, scrip_code)
             if records:
-                upsert_financials(records)
-                logger.info("financials_stored", company=company, records=len(records))
+                # BSEProvider.get_financials() already returns values in Crores
+                db_records = [
+                    {
+                        "company":         company,
+                        "ticker":          ticker,
+                        "fiscal_year":     r["fiscal_year"],
+                        "fiscal_quarter":  r["fiscal_quarter"],
+                        "period_end_date": None,
+                        "revenue":         r.get("revenue"),
+                        "net_income":      r.get("net_income"),
+                        "ebitda":          None,
+                        "eps":             r.get("eps"),
+                        "total_assets":    None,
+                        "total_debt":      None,
+                        "cash":            None,
+                        "operating_cash_flow": None,
+                        "gross_margin":    r.get("gross_margin"),
+                        "net_margin":      r.get("net_margin"),
+                    }
+                    for r in records
+                ]
+                upsert_financials(db_records)
+                logger.info("bse_financials_stored", company=company, records=len(db_records))
         except Exception as exc:
-            logger.warning("financials_fetch_failed", company=company, error=str(exc))
+            logger.warning("bse_financials_failed", company=company, error=str(exc))
 
-        # Fetch live price
+    async def _fetch_bse_price(self, company: str, ticker: str, scrip_code: str) -> None:
+        from app.data.financial_db import upsert_stock_prices
+        from datetime import date
         try:
-            price = await asyncio.to_thread(self._provider.get_price, scrip_code)
+            price = await asyncio.to_thread(self._bse.get_price, scrip_code)
             if price.get("LTP"):
-                from datetime import date
                 upsert_stock_prices([{
                     "company": company, "ticker": ticker,
-                    "date": str(date.today()),
-                    "open": price.get("Open"), "high": price.get("High"),
-                    "low": price.get("Low"), "close": price.get("LTP"),
-                    "volume": None,
+                    "date":    str(date.today()),
+                    "open":    price.get("Open"),
+                    "high":    price.get("High"),
+                    "low":     price.get("Low"),
+                    "close":   price.get("LTP"),
+                    "volume":  None,
                 }])
+                logger.info("bse_price_stored", company=company, ltp=price.get("LTP"))
         except Exception as exc:
-            logger.warning("price_fetch_failed", company=company, error=str(exc))
+            logger.warning("bse_price_failed", company=company, error=str(exc))
+
+    async def _fetch_yfinance_data(self, company: str, yf_ticker: str) -> None:
+        from app.data.financial_db import upsert_financials, upsert_stock_prices
+
+        # Historical financials (already in Crores from YFinanceProvider)
+        try:
+            records = await asyncio.to_thread(self._yf.get_financials, yf_ticker)
+            if records:
+                db_records = [
+                    {
+                        "company":             company,
+                        "ticker":              yf_ticker,
+                        "fiscal_year":         r["fiscal_year"],
+                        "fiscal_quarter":      r["fiscal_quarter"],
+                        "period_end_date":     r.get("period_end_date"),
+                        "revenue":             r.get("revenue"),
+                        "net_income":          r.get("net_income"),
+                        "ebitda":              r.get("ebitda"),
+                        "eps":                 r.get("eps"),
+                        "total_assets":        r.get("total_assets"),
+                        "total_debt":          r.get("total_debt"),
+                        "cash":                r.get("cash"),
+                        "operating_cash_flow": r.get("operating_cash_flow"),
+                        "gross_margin":        r.get("gross_margin"),
+                        "net_margin":          r.get("net_margin"),
+                    }
+                    for r in records
+                ]
+                upsert_financials(db_records)
+                logger.info("yfinance_financials_stored", company=company, records=len(db_records))
+        except Exception as exc:
+            logger.warning("yfinance_financials_failed", company=company, error=str(exc))
+
+        # Historical prices
+        try:
+            prices = await asyncio.to_thread(self._yf.get_prices, yf_ticker)
+            if prices:
+                db_prices = [
+                    {"company": company, "ticker": yf_ticker, **p}
+                    for p in prices
+                ]
+                upsert_stock_prices(db_prices)
+                logger.info("yfinance_prices_stored", company=company, records=len(db_prices))
+        except Exception as exc:
+            logger.warning("yfinance_prices_failed", company=company, error=str(exc))
 
     async def _fetch_and_ingest_pdfs(self, company: str, ticker: str, scrip_code: str) -> int:
         announcements = await asyncio.to_thread(
-            self._provider.get_announcements, scrip_code, 365
+            self._bse.get_announcements, scrip_code, 365
         )
-
-        # Take most recent MAX_PDFS
         to_ingest = announcements[:MAX_PDFS]
-        ingested = 0
+        ingested  = 0
 
         for ann in to_ingest:
             attachment = ann.get("ATTACHMENTNAME", "")
-            category = ann.get("CATEGORYNAME", "Document")
-            news_dt = ann.get("NEWS_DT", "")
-            year = int(news_dt[:4]) if news_dt else 2024
+            category   = ann.get("CATEGORYNAME", "Document")
+            news_dt    = ann.get("NEWS_DT", "")
+            year       = int(news_dt[:4]) if news_dt else 2024
 
             try:
-                pdf_bytes = await asyncio.to_thread(self._provider.download_pdf, attachment)
+                pdf_bytes = await asyncio.to_thread(self._bse.download_pdf, attachment)
                 await self._ingestion.ingest(
                     content=pdf_bytes,
                     filename=attachment,
                     overrides={
-                        "company": company,
-                        "ticker": ticker,
-                        "year": year,
+                        "company":     company,
+                        "ticker":      ticker,
+                        "year":        year,
                         "report_type": category,
                     },
                 )
                 ingested += 1
                 logger.info("pdf_ingested", company=company, attachment=attachment)
-                await asyncio.sleep(1)  # polite delay between downloads
+                await asyncio.sleep(1)
             except Exception as exc:
                 logger.warning("pdf_ingest_failed", attachment=attachment, error=str(exc))
 
         return ingested
-
-
-# ── Parser ─────────────────────────────────────────────────────────────────────
-
-def _parse_snapshot_to_records(company: str, ticker: str, snapshot: dict) -> list[dict]:
-    """Convert BSE resultsSnapshot() into financial_db upsert records."""
-    records = []
-    periods = snapshot.get("periods", [])
-    data = snapshot.get("results_in_crores", {}).get("data", [])
-
-    if not periods or not data:
-        return records
-
-    # Build period → values mapping
-    period_data: dict[str, dict] = {p: {} for p in periods}
-    for row in data:
-        field_name = row[0]
-        for i, period in enumerate(periods, 1):
-            if i < len(row):
-                try:
-                    val = float(str(row[i]).replace(",", ""))
-                    period_data[period][field_name] = val
-                except (ValueError, TypeError):
-                    pass
-
-    for period, values in period_data.items():
-        if not values:
-            continue
-        # Determine if annual or quarterly
-        is_annual = period.startswith("FY")
-        fiscal_year = _extract_year(period)
-        fiscal_quarter = "Annual" if is_annual else _period_to_quarter(period)
-
-        records.append({
-            "company": company,
-            "ticker": ticker,
-            "fiscal_year": fiscal_year,
-            "fiscal_quarter": fiscal_quarter,
-            "period_end_date": None,
-            "revenue": values.get("Revenue"),
-            "net_income": values.get("Net Profit"),
-            "ebitda": None,
-            "eps": values.get("EPS"),
-            "total_assets": None,
-            "total_debt": None,
-            "cash": None,
-            "operating_cash_flow": None,
-            "gross_margin": values.get("OPM %"),
-            "net_margin": values.get("NPM %"),
-        })
-
-    return records
-
-
-def _extract_year(period: str) -> int:
-    """Extract fiscal year from period string like 'FY24-25' or 'Dec-25'."""
-    import re
-    m = re.search(r"(\d{2,4})", period)
-    if not m:
-        return 2024
-    yr = int(m.group(1))
-    return yr + 2000 if yr < 100 else yr
-
-
-def _period_to_quarter(period: str) -> str:
-    """Map 'Dec-25' → 'Q3', 'Sep-25' → 'Q2' etc."""
-    month_map = {
-        "Jun": "Q1", "Sep": "Q2", "Dec": "Q3", "Mar": "Q4",
-        "Jan": "Q3", "Feb": "Q3", "Apr": "Q1", "May": "Q1",
-        "Jul": "Q2", "Aug": "Q2", "Oct": "Q3", "Nov": "Q3",
-    }
-    for month, quarter in month_map.items():
-        if period.startswith(month):
-            return quarter
-    return "Q1"

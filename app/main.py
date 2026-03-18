@@ -1,4 +1,5 @@
 """FastAPI application factory with lifespan management."""
+import asyncio
 from contextlib import asynccontextmanager
 
 import structlog
@@ -65,6 +66,14 @@ async def lifespan(app: FastAPI):
         logger.info("financial_db_initialised")
     except Exception as exc:
         logger.error("financial_db_init_failed", error=str(exc))
+
+    # Preload BSE securities cache (powers search bar)
+    try:
+        from app.services.providers.bse_provider import BSEProvider
+        count = await asyncio.to_thread(BSEProvider.load_securities_cache)
+        logger.info("bse_securities_cache_ready", count=count)
+    except Exception as exc:
+        logger.warning("bse_securities_cache_failed", error=str(exc))
 
     logger.info("application_ready")
     yield

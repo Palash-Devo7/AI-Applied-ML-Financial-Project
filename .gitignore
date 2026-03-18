@@ -9,6 +9,8 @@ data/training_data.jsonl
 data/datasets/
 data/financial_data.db
 *.db
+*.db-shm
+*.db-wal
 
 # Models (downloaded at runtime)
 models/

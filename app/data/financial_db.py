@@ -112,8 +112,15 @@ def upsert_ticker(company: str, ticker: str, exchange: str = "NSE") -> None:
 
 
 def get_ticker(company: str) -> Optional[str]:
-    row = _get_conn().execute(
-        "SELECT ticker FROM ticker_map WHERE company=?", (company,)
+    conn = _get_conn()
+    row = conn.execute("SELECT ticker FROM ticker_map WHERE company=?", (company,)).fetchone()
+    if row:
+        return row["ticker"]
+    # Fallback: match by ticker base (e.g. "TATASTEEL" finds "TATASTEEL.NS" for stock prices)
+    ticker_base = company.upper().replace(".NS", "").replace(".BO", "")
+    row = conn.execute(
+        "SELECT ticker FROM ticker_map WHERE UPPER(ticker) = ? OR UPPER(ticker) = ?",
+        (ticker_base + ".NS", ticker_base + ".BO"),
     ).fetchone()
     return row["ticker"] if row else None
 
@@ -153,12 +160,32 @@ def upsert_financials(records: list[dict]) -> int:
 
 
 def get_financials(company: str, years: int = 5) -> list[dict]:
-    rows = _get_conn().execute(
+    conn = _get_conn()
+    # Primary lookup by company name
+    rows = conn.execute(
         """SELECT * FROM company_financials
            WHERE company=? AND fiscal_quarter='Annual'
            ORDER BY fiscal_year DESC LIMIT ?""",
         (company, years),
     ).fetchall()
+
+    # Fallback: if few records, also search by ticker base (handles BSE vs yfinance name mismatch)
+    # e.g. "TATASTEEL" ticker matches "TATASTEEL.NS" from yfinance
+    if len(rows) < years:
+        ticker_base = company.upper().replace(".NS", "").replace(".BO", "")
+        extra = conn.execute(
+            """SELECT * FROM company_financials
+               WHERE company != ? AND fiscal_quarter='Annual'
+                 AND (UPPER(ticker) = ? OR UPPER(ticker) = ? OR UPPER(ticker) = ?)
+               ORDER BY fiscal_year DESC LIMIT ?""",
+            (company, ticker_base, ticker_base + ".NS", ticker_base + ".BO", years),
+        ).fetchall()
+        # Merge: deduplicate by fiscal_year, prefer primary rows
+        existing_years = {r["fiscal_year"] for r in rows}
+        merged = list(rows) + [r for r in extra if r["fiscal_year"] not in existing_years]
+        merged.sort(key=lambda r: r["fiscal_year"], reverse=True)
+        return [dict(r) for r in merged[:years]]
+
     return [dict(r) for r in rows]
 
 
@@ -300,6 +327,16 @@ def update_docs_synced(company: str, doc_count: int) -> None:
     conn.commit()
 
 
+def update_prices_synced(company: str) -> None:
+    from datetime import datetime, timezone
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE company_registry SET prices_synced_at=? WHERE company=?",
+        (datetime.now(timezone.utc).isoformat(), company),
+    )
+    conn.commit()
+
+
 def get_company_registry(company: str) -> Optional[dict]:
     row = _get_conn().execute(
         "SELECT * FROM company_registry WHERE company=?", (company,)
@@ -337,15 +374,16 @@ def build_financial_context(company: str) -> str:
 
     # Annual financials table
     if fins:
-        lines.append("\nANNUAL FINANCIALS (in Crores INR or as reported):")
+        lines.append("\nANNUAL FINANCIALS (all values in Crores INR):")
         lines.append(f"{'Year':<8} {'Revenue':>14} {'Net Income':>12} {'EBITDA':>12} {'EPS':>8} {'Total Assets':>14} {'Net Margin':>11}")
         lines.append("-" * 82)
         for f in fins:
-            rev  = f"{f['revenue']/1e7:.0f}Cr"  if f.get("revenue")      else "N/A"
-            ni   = f"{f['net_income']/1e7:.0f}Cr" if f.get("net_income")  else "N/A"
-            ebit = f"{f['ebitda']/1e7:.0f}Cr"   if f.get("ebitda")       else "N/A"
+            # Values stored in Crores — display directly
+            rev  = f"{f['revenue']:.0f}Cr"       if f.get("revenue")      else "N/A"
+            ni   = f"{f['net_income']:.0f}Cr"    if f.get("net_income")   else "N/A"
+            ebit = f"{f['ebitda']:.0f}Cr"        if f.get("ebitda")       else "N/A"
             eps  = f"{f['eps']:.2f}"             if f.get("eps")          else "N/A"
-            ta   = f"{f['total_assets']/1e7:.0f}Cr" if f.get("total_assets") else "N/A"
+            ta   = f"{f['total_assets']:.0f}Cr"  if f.get("total_assets") else "N/A"
             nm   = f"{f['net_margin']:.1f}%"     if f.get("net_margin")   else "N/A"
             lines.append(f"{f['fiscal_year']:<8} {rev:>14} {ni:>12} {ebit:>12} {eps:>8} {ta:>14} {nm:>11}")
 
