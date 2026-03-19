@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
                 role="admin",
                 api_key=api_key,
             )
-            logger.info("admin_user_created", email=settings.admin_email, api_key=api_key)
+            logger.info("admin_user_created", email=settings.admin_email[:3] + "***", api_key=api_key[:6] + "***")
     except Exception as exc:
         logger.error("auth_db_init_failed", error=str(exc))
 
