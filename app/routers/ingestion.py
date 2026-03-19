@@ -3,9 +3,11 @@ import asyncio
 from typing import Dict
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel
 
+from app.core.auth_deps import get_current_user, require_credits, consume_after_success
+from app.core.limiter import limiter
 from app.dependencies import get_embedding_service, get_vector_store
 from app.models.documents import UploadResponse
 from app.services.ingestion_service import IngestionService
@@ -77,7 +79,9 @@ async def _run_ingestion(
     status_code=status.HTTP_202_ACCEPTED,
     summary="Upload and ingest a financial document (PDF) — returns immediately, processes in background",
 )
+@limiter.limit("5/minute")
 async def upload_document(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="PDF file to ingest"),
     company: str | None = Form(None, description="Company name override"),
@@ -85,6 +89,7 @@ async def upload_document(
     report_type: str | None = Form(None, description="Report type (10-K, 10-Q, 8-K, EARNINGS)"),
     year: int | None = Form(None, description="Fiscal year override"),
     sector: str | None = Form(None, description="Industry sector"),
+    user: dict = Depends(require_credits),
     embedding_service=Depends(get_embedding_service),
     vector_store=Depends(get_vector_store),
 ) -> JobStatus:
@@ -144,6 +149,7 @@ async def upload_document(
     )
 
     logger.info("ingestion_queued", document_id=document_id, filename=file.filename)
+    consume_after_success(request)
 
     return JobStatus(
         document_id=document_id,
@@ -158,7 +164,7 @@ async def upload_document(
     response_model=JobStatus,
     summary="Check ingestion status for a document",
 )
-async def get_ingestion_status(document_id: str) -> JobStatus:
+async def get_ingestion_status(document_id: str, user: dict = Depends(get_current_user)) -> JobStatus:
     job = _jobs.get(document_id)
     if not job:
         raise HTTPException(
@@ -170,7 +176,9 @@ async def get_ingestion_status(document_id: str) -> JobStatus:
 
 @router.get(
     "/jobs",
-    summary="List all ingestion jobs and their statuses",
+    summary="List all ingestion jobs and their statuses (admin only)",
 )
-async def list_jobs() -> list[JobStatus]:
+async def list_jobs(user: dict = Depends(get_current_user)) -> list[JobStatus]:
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
     return [JobStatus(**j) for j in _jobs.values()]

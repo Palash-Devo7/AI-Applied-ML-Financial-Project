@@ -1,3 +1,4 @@
+import { AuthGuard } from "@/components/auth-guard";
 import CompanyView from "./company-view";
 
 interface Props {
@@ -6,5 +7,9 @@ interface Props {
 
 export default async function CompanyPage({ params }: Props) {
   const { ticker } = await params;
-  return <CompanyView ticker={ticker} />;
+  return (
+    <AuthGuard>
+      <CompanyView ticker={ticker} />
+    </AuthGuard>
+  );
 }

@@ -1,9 +1,83 @@
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
+// ─── Token management (module-level, set by AuthProvider) ────────────────────
+
+let _token: string | null = null;
+
+export function setAuthToken(t: string) {
+  _token = t;
+}
+
+export function clearAuthToken() {
+  _token = null;
+}
+
+// ─── Core request helper ──────────────────────────────────────────────────────
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API}${path}`, init);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string>),
+  };
+  if (_token) headers["Authorization"] = `Bearer ${_token}`;
+
+  const res = await fetch(`${API}${path}`, { ...init, headers });
+
+  if (!res.ok) {
+    if (res.status === 401 && typeof window !== "undefined") {
+      clearAuthToken();
+      sessionStorage.removeItem("auth_token");
+      window.location.href = "/auth/login";
+    }
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.detail ?? `${res.status} ${res.statusText}`);
+  }
   return res.json();
+}
+
+// ─── Auth API ─────────────────────────────────────────────────────────────────
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  role: string;
+  api_key?: string;
+}
+
+export interface Credits {
+  used: number;
+  limit: number;
+  remaining: number;
+  role: string;
+}
+
+export interface AuthResponse {
+  access_token: string;
+  token_type: string;
+  api_key: string;
+}
+
+export async function authLogin(email: string, password: string): Promise<AuthResponse> {
+  return request<AuthResponse>("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function authRegister(email: string, password: string): Promise<AuthResponse> {
+  return request<AuthResponse>("/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export interface MeResponse extends AuthUser {
+  credits: Credits;
+}
+
+export async function authMe(): Promise<MeResponse> {
+  return request<MeResponse>("/auth/me");
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -153,9 +227,11 @@ export function streamQuery(
   onError: (err: Error) => void
 ): AbortController {
   const ctrl = new AbortController();
+  const streamHeaders: Record<string, string> = { "Content-Type": "application/json" };
+  if (_token) streamHeaders["Authorization"] = `Bearer ${_token}`;
   fetch(`${API}/query/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: streamHeaders,
     body: JSON.stringify({ question, company }),
     signal: ctrl.signal,
   })

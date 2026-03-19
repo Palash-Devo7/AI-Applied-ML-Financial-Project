@@ -2,6 +2,7 @@
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.core.auth_deps import get_current_user
 from app.dependencies import get_vector_store
 
 router = APIRouter(prefix="/collections", tags=["collections"])
@@ -9,7 +10,7 @@ logger = structlog.get_logger(__name__)
 
 
 @router.get("")
-async def list_collections(vector_store=Depends(get_vector_store)) -> dict:
+async def list_collections(vector_store=Depends(get_vector_store), user: dict = Depends(get_current_user)) -> dict:
     """List all available collections and their metadata."""
     try:
         info = await vector_store.get_collection_info()
@@ -20,7 +21,7 @@ async def list_collections(vector_store=Depends(get_vector_store)) -> dict:
 
 
 @router.get("/companies")
-async def list_companies(vector_store=Depends(get_vector_store)) -> dict:
+async def list_companies(vector_store=Depends(get_vector_store), user: dict = Depends(get_current_user)) -> dict:
     """List all unique company names stored in the collection."""
     try:
         from starlette.concurrency import run_in_threadpool
@@ -43,6 +44,7 @@ async def list_companies(vector_store=Depends(get_vector_store)) -> dict:
 async def get_collection(
     collection_name: str,
     vector_store=Depends(get_vector_store),
+    user: dict = Depends(get_current_user),
 ) -> dict:
     """Get metadata for a specific collection."""
     try:
@@ -61,8 +63,11 @@ async def get_collection(
 async def delete_collection(
     collection_name: str,
     vector_store=Depends(get_vector_store),
+    user: dict = Depends(get_current_user),
 ) -> dict:
     """Delete a collection and all its documents."""
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
     try:
         await vector_store.delete_collection(collection_name)
         logger.info("collection_deleted", collection=collection_name)

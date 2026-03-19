@@ -2,6 +2,9 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   getCompanyStatus,
   getFinancials,
@@ -24,7 +27,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { ArrowLeft, TrendingUp, TrendingDown, Minus, Send, Loader2 } from "lucide-react";
+import { ArrowLeft, TrendingUp, TrendingDown, Minus, Send, Loader2, FileText } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
@@ -216,6 +219,7 @@ const STANCE_ICON: Record<string, typeof TrendingUp> = {
 };
 
 function ForecastTab({ companyName }: { companyName: string }) {
+  const { refreshCredits } = useAuth();
   const [eventType, setEventType] = useState("earnings_beat");
   const [description, setDescription] = useState("");
   const [horizon, setHorizon] = useState(90);
@@ -237,6 +241,7 @@ function ForecastTab({ companyName }: { companyName: string }) {
       };
       const r = await forecastEvent(payload);
       setResult(r);
+      refreshCredits().catch(() => {});
     } catch (e) {
       setError(e instanceof Error ? e.message : "Forecast failed");
     } finally {
@@ -356,7 +361,6 @@ function ForecastTab({ companyName }: { companyName: string }) {
                       {view.stance}
                     </span>
                   </div>
-                  <p className="text-muted-foreground text-xs font-medium">{view.estimated_impact}</p>
                   <ul className="space-y-1.5">
                     {view.key_points.map((pt, i) => (
                       <li key={i} className="text-foreground text-xs leading-relaxed flex gap-2">
@@ -416,6 +420,7 @@ function ForecastTab({ companyName }: { companyName: string }) {
 // ─── Chat tab ─────────────────────────────────────────────────────────────────
 
 function ChatTab({ companyName }: { companyName: string }) {
+  const { refreshCredits } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -447,7 +452,7 @@ function ChatTab({ companyName }: { companyName: string }) {
           return updated;
         });
       },
-      () => setStreaming(false),
+      () => { setStreaming(false); refreshCredits().catch(() => {}); },
       () => {
         setMessages((prev) => {
           const updated = [...prev];
@@ -474,18 +479,47 @@ function ChatTab({ companyName }: { companyName: string }) {
           <div
             key={i}
             className={cn(
-              "max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
+              "rounded-2xl px-4 py-3 text-sm leading-relaxed",
               m.role === "user"
-                ? "ml-auto bg-primary text-primary-foreground"
-                : "bg-card border border-border text-foreground"
+                ? "ml-auto max-w-[80%] bg-primary text-primary-foreground"
+                : "w-full bg-card border border-border text-foreground prose-chat"
             )}
           >
-            {m.content || (
+            {!m.content ? (
               <span className="flex gap-1">
                 <span className="animate-bounce">.</span>
                 <span className="animate-bounce" style={{ animationDelay: "0.1s" }}>.</span>
                 <span className="animate-bounce" style={{ animationDelay: "0.2s" }}>.</span>
               </span>
+            ) : m.role === "user" ? (
+              m.content
+            ) : (
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  h1: ({ children }) => <h1 className="text-lg font-bold text-foreground mt-4 mb-2 first:mt-0">{children}</h1>,
+                  h2: ({ children }) => <h2 className="text-base font-bold text-foreground mt-4 mb-2 first:mt-0">{children}</h2>,
+                  h3: ({ children }) => <h3 className="text-sm font-semibold text-foreground mt-3 mb-1.5 first:mt-0">{children}</h3>,
+                  p: ({ children }) => <p className="text-foreground mb-2 last:mb-0 leading-relaxed">{children}</p>,
+                  ul: ({ children }) => <ul className="list-disc list-outside ml-4 mb-2 space-y-1">{children}</ul>,
+                  ol: ({ children }) => <ol className="list-decimal list-outside ml-4 mb-2 space-y-1">{children}</ol>,
+                  li: ({ children }) => <li className="text-foreground leading-relaxed">{children}</li>,
+                  strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+                  em: ({ children }) => <em className="italic text-muted-foreground">{children}</em>,
+                  code: ({ children }) => <code className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono text-foreground">{children}</code>,
+                  blockquote: ({ children }) => <blockquote className="border-l-2 border-primary pl-3 my-2 text-muted-foreground italic">{children}</blockquote>,
+                  table: ({ children }) => (
+                    <div className="overflow-x-auto my-3">
+                      <table className="w-full text-xs border-collapse">{children}</table>
+                    </div>
+                  ),
+                  th: ({ children }) => <th className="text-left px-3 py-2 bg-muted text-muted-foreground font-medium border border-border">{children}</th>,
+                  td: ({ children }) => <td className="px-3 py-2 border border-border text-foreground">{children}</td>,
+                  hr: () => <hr className="border-border my-3" />,
+                }}
+              >
+                {m.content}
+              </ReactMarkdown>
             )}
           </div>
         ))}
@@ -520,16 +554,47 @@ export default function CompanyView({ ticker }: { ticker: string }) {
   const [financials, setFinancials] = useState<AnnualFinancial[] | null>(null);
   const [stock, setStock] = useState<StockSummary | null>(null);
 
+  // Poll status + re-fetch financials/stock whenever data arrives
   useEffect(() => {
-    getCompanyStatus(ticker)
-      .then(setStatus)
-      .catch(() => null);
-    getFinancials(ticker)
-      .then((d) => setFinancials(d.annual_financials))
-      .catch(() => setFinancials([]));
-    getStockSummary(ticker)
-      .then(setStock)
-      .catch(() => null);
+    let stopped = false;
+    let hasPrices = false;
+    let hasFinancials = false;
+
+    async function fetchMarketData() {
+      getStockSummary(ticker).then(setStock).catch(() => null);
+      getFinancials(ticker)
+        .then((d) => { if (d.annual_financials.length > 0) setFinancials(d.annual_financials); })
+        .catch(() => null);
+    }
+
+    // Initial fetch
+    fetchMarketData();
+
+    async function poll() {
+      while (!stopped) {
+        try {
+          const s = await getCompanyStatus(ticker);
+          setStatus(s);
+
+          // Re-fetch market data when prices or financials become available for the first time
+          const newPrices = !!s.prices_synced_at;
+          const newFinancials = (s.doc_count ?? 0) > 0;
+          if ((newPrices && !hasPrices) || (newFinancials && !hasFinancials)) {
+            fetchMarketData();
+            hasPrices = newPrices;
+            hasFinancials = newFinancials;
+          }
+
+          if (s.status === "ready") {
+            fetchMarketData(); // final refresh on ready
+            break;
+          }
+        } catch { /* ignore */ }
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+    }
+    poll();
+    return () => { stopped = true; };
   }, [ticker]);
 
   const companyName = status?.company ?? ticker;
@@ -546,6 +611,31 @@ export default function CompanyView({ ticker }: { ticker: string }) {
         </button>
 
         <HeroBar ticker={ticker} status={status} stock={stock} />
+
+        {/* Ingestion progress banner */}
+        {status && status.status !== "ready" && (
+          <div className="mt-4 flex items-center gap-3 px-4 py-3 rounded-xl border border-primary/20 bg-primary/5 text-sm">
+            <Loader2 className="h-4 w-4 text-primary animate-spin shrink-0" />
+            <div className="flex-1">
+              <span className="text-foreground font-medium">Loading company data in background</span>
+              <span className="text-muted-foreground ml-2">
+                — financials ready, ingesting filings
+                {status.doc_count ? ` (${status.doc_count} docs so far)` : ""}
+              </span>
+            </div>
+            <span className="text-muted-foreground flex items-center gap-1 text-xs">
+              <FileText className="h-3.5 w-3.5" />
+              Chat available once docs are indexed
+            </span>
+          </div>
+        )}
+
+        {status?.status === "ready" && (status.doc_count ?? 0) > 0 && (
+          <div className="mt-4 flex items-center gap-2 px-4 py-2.5 rounded-xl border border-green-500/20 bg-green-500/5 text-sm text-green-400">
+            <FileText className="h-4 w-4 shrink-0" />
+            {status.doc_count} documents indexed — all features available
+          </div>
+        )}
 
         <Tabs defaultValue="overview" className="mt-6">
           <TabsList className="bg-card border border-border">

@@ -2,15 +2,17 @@
 import json
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
+from app.core.auth_deps import get_current_user, require_credits, consume_after_success
 from app.dependencies import (
     get_embedding_service,
     get_generation_service,
     get_mcp_service,
     get_retrieval_service,
 )
+from app.core.limiter import limiter
 from app.models.queries import QueryRequest, QueryResponse
 from app.services.query_service import QueryService
 
@@ -33,8 +35,11 @@ def _make_service(embedding_service, retrieval_service, generation_service, mcp_
     status_code=status.HTTP_200_OK,
     summary="Submit a financial question for RAG-augmented answer",
 )
+@limiter.limit("20/minute")
 async def query_documents(
-    request: QueryRequest,
+    request: Request,
+    body: QueryRequest,
+    user: dict = Depends(require_credits),
     embedding_service=Depends(get_embedding_service),
     retrieval_service=Depends(get_retrieval_service),
     generation_service=Depends(get_generation_service),
@@ -42,12 +47,14 @@ async def query_documents(
 ) -> QueryResponse:
     service = _make_service(embedding_service, retrieval_service, generation_service, mcp_service)
     try:
-        return await service.query(request)
+        result = await service.query(body)
+        consume_after_success(request)
+        return result
     except Exception as exc:
         logger.error("query_endpoint_failed", error=str(exc))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Query failed: {exc}",
+            detail="Query failed. Please try again.",
         ) from exc
 
 
@@ -55,36 +62,40 @@ async def query_documents(
     "/query/stream",
     summary="Stream a financial question answer token-by-token (SSE)",
 )
+@limiter.limit("20/minute")
 async def query_stream(
-    request: QueryRequest,
+    request: Request,
+    body: QueryRequest,
+    user: dict = Depends(require_credits),
     embedding_service=Depends(get_embedding_service),
     retrieval_service=Depends(get_retrieval_service),
     generation_service=Depends(get_generation_service),
     mcp_service=Depends(get_mcp_service),
 ):
+    # Consume credit before streaming starts
+    consume_after_success(request)
+
     service = _make_service(embedding_service, retrieval_service, generation_service, mcp_service)
 
     async def event_generator():
         try:
-            # Step 1: classify + retrieve (fast — happens before streaming)
-            query_type = service._mcp.classify_query(request.question)
-            entities = service._mcp.extract_entities(request.question)
-            if request.company:
-                entities["company"] = request.company
+            query_type = service._mcp.classify_query(body.question)
+            entities = service._mcp.extract_entities(body.question)
+            if body.company:
+                entities["company"] = body.company
                 entities.pop("ticker", None)
-            where_filter = service._mcp.build_metadata_filters(entities, request.filters)
+            where_filter = service._mcp.build_metadata_filters(entities, body.filters)
 
-            query_embeddings = await service._embedding.embed_texts([request.question])
+            query_embeddings = await service._embedding.embed_texts([body.question])
             chunks = await service._retrieval.hybrid_query(
                 query_embeddings=query_embeddings,
-                query_text=request.question,
+                query_text=body.question,
                 where=where_filter,
-                top_k=request.top_k,
+                top_k=body.top_k,
             )
             context_str, used_chunks = service._mcp.assemble_context(chunks)
 
-            # Enrich with structured financial data (SQLite) if company is known
-            company_name = request.company or entities.get("company")
+            company_name = body.company or entities.get("company")
             if company_name:
                 try:
                     from app.data.financial_db import build_financial_context
@@ -94,7 +105,6 @@ async def query_stream(
                 except Exception as e:
                     logger.warning("structured_context_failed", error=str(e))
 
-            # Send metadata first so UI can show sources immediately
             sources = [
                 {
                     "chunk_id": c.chunk_id,
@@ -109,21 +119,13 @@ async def query_stream(
                 }
                 for c in used_chunks
             ]
-            meta_event = json.dumps({
-                "type": "meta",
-                "query_type": query_type,
-                "chunk_count": len(used_chunks),
-                "sources": sources if request.include_sources else [],
-            })
-            yield f"data: {meta_event}\n\n"
+            yield f"data: {json.dumps({'type': 'meta', 'query_type': query_type, 'chunk_count': len(used_chunks), 'sources': sources if body.include_sources else []})}\n\n"
 
             if not context_str:
-                no_data = json.dumps({"type": "token", "text": "I was unable to find relevant information in the knowledge base. Please upload relevant financial documents first or refine your question."})
-                yield f"data: {no_data}\n\n"
+                yield f"data: {json.dumps({'type': 'token', 'text': 'I was unable to find relevant information in the knowledge base. Please upload relevant financial documents first or refine your question.'})}\n\n"
             else:
-                # Stream tokens
                 async for token in service._generation.stream_generate(
-                    question=request.question,
+                    question=body.question,
                     context=context_str,
                     query_type=query_type,
                 ):
@@ -133,13 +135,10 @@ async def query_stream(
 
         except Exception as exc:
             logger.error("stream_query_failed", error=str(exc))
-            yield f"data: {json.dumps({'type': 'error', 'text': str(exc)})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'text': 'An error occurred. Please try again.'})}\n\n"
 
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

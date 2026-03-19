@@ -50,15 +50,12 @@ export default function SearchBar() {
   }, []);
 
   const selectCompany = useCallback(
-    async (company: CompanyResult) => {
+    (company: CompanyResult) => {
       setOpen(false);
       setQuery(company.name);
       setNavigating(true);
-      try {
-        await loadCompany(company.ticker);
-      } catch {
-        // best effort — backend might already have it
-      }
+      // Fire-and-forget — don't block navigation on load
+      loadCompany(company.ticker).catch(() => {});
       router.push(`/company/${company.ticker}`);
     },
     [router]

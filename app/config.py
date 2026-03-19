@@ -72,6 +72,18 @@ class Settings(BaseSettings):
     use_finetuned_model: bool = False
     finetuned_model_path: str = ""
 
+    # ── Auth + Security ───────────────────────────────────────────────────────
+    jwt_secret: str = Field(default="change-me-in-production-use-openssl-rand-hex-32")
+    jwt_expire_hours: int = 24
+    admin_email: str = Field(default="admin@financerag.com")
+    admin_password: str = Field(default="")   # Set in .env — empty disables auto-create
+    allowed_origins: str = Field(default="http://localhost:3000")  # comma-separated
+
+    # ── Rate limiting ─────────────────────────────────────────────────────────
+    rate_limit_query: str = "20/minute"
+    rate_limit_upload: str = "5/minute"
+    rate_limit_global: str = "60/minute"
+
     # ── Monitoring ────────────────────────────────────────────────────────────
     prometheus_enabled: bool = True
     metrics_prefix: str = "finance_rag"

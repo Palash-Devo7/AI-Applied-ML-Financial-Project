@@ -2,10 +2,12 @@
 import asyncio
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
+from app.core.auth_deps import get_current_user, require_credits, consume_after_success
 from app.dependencies import get_embedding_service, get_vector_store
+from app.core.limiter import limiter
 
 router = APIRouter(prefix="/companies", tags=["companies"])
 logger = structlog.get_logger(__name__)
@@ -18,9 +20,12 @@ class LoadRequest(BaseModel):
 
 
 @router.post("/load", status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit("10/minute")
 async def load_company(
+    request: Request,
     req: LoadRequest,
     background_tasks: BackgroundTasks,
+    user: dict = Depends(require_credits),
     embedding_service=Depends(get_embedding_service),
     vector_store=Depends(get_vector_store),
 ):
@@ -49,11 +54,12 @@ async def load_company(
         await loader.load(ticker=ticker, company_display_name=req.company_name)
 
     background_tasks.add_task(_run)
+    consume_after_success(request)
     return {"status": "loading", "ticker": ticker, "message": "Load started in background."}
 
 
 @router.get("/status/{ticker}")
-async def company_status(ticker: str):
+async def company_status(ticker: str, user: dict = Depends(get_current_user)):
     """Get load status for a ticker."""
     from app.data.financial_db import get_registry_by_ticker
     record = get_registry_by_ticker(ticker.upper())
@@ -63,14 +69,14 @@ async def company_status(ticker: str):
 
 
 @router.get("/list")
-async def list_companies():
+async def list_companies(user: dict = Depends(get_current_user)):
     """List all registered companies with their load status."""
     from app.data.financial_db import list_registered_companies
     return {"companies": list_registered_companies()}
 
 
 @router.get("/search")
-async def search_companies(q: str = ""):
+async def search_companies(q: str = "", user: dict = Depends(get_current_user)):
     """Search BSE-listed companies by name or ticker. Powered by in-memory cache."""
     if not q or len(q.strip()) < 2:
         return {"results": [], "query": q}

@@ -3,11 +3,14 @@ import asyncio
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.config import get_settings
+from app.core.limiter import limiter
 from app.monitoring.logger import configure_logging
 from app.monitoring.middleware import RequestLoggingMiddleware
 
@@ -27,7 +30,26 @@ async def lifespan(app: FastAPI):
         environment=settings.environment,
     )
 
-    # Eagerly initialise singletons so they are ready before first request
+    # Initialise auth DB + seed admin user
+    try:
+        from app.data.auth_db import init_auth_db, user_exists, create_user
+        from app.core.security import hash_password, generate_api_key
+        init_auth_db()
+        logger.info("auth_db_initialised")
+
+        if settings.admin_password and not user_exists(settings.admin_email):
+            api_key = generate_api_key()
+            create_user(
+                email=settings.admin_email,
+                password_hash=hash_password(settings.admin_password),
+                role="admin",
+                api_key=api_key,
+            )
+            logger.info("admin_user_created", email=settings.admin_email, api_key=api_key)
+    except Exception as exc:
+        logger.error("auth_db_init_failed", error=str(exc))
+
+    # Eagerly initialise singletons
     from app.dependencies import (
         _get_embedding_service_singleton,
         _get_mcp_service_singleton,
@@ -36,13 +58,13 @@ async def lifespan(app: FastAPI):
     )
 
     try:
-        vector_store = _get_vector_store_singleton()
+        _get_vector_store_singleton()
         logger.info("vector_store_initialised")
     except Exception as exc:
         logger.error("vector_store_init_failed", error=str(exc))
 
     try:
-        embedding_service = _get_embedding_service_singleton()
+        _get_embedding_service_singleton()
         logger.info("embedding_service_initialised", model=settings.embedding_model)
     except Exception as exc:
         logger.error("embedding_service_init_failed", error=str(exc))
@@ -59,7 +81,6 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("mcp_service_init_failed", error=str(exc))
 
-    # Initialise structured financial database
     try:
         from app.data.financial_db import init_db
         init_db()
@@ -67,7 +88,6 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("financial_db_init_failed", error=str(exc))
 
-    # Preload BSE securities cache (powers search bar)
     try:
         from app.services.providers.bse_provider import BSEProvider
         count = await asyncio.to_thread(BSEProvider.load_securities_cache)
@@ -77,7 +97,6 @@ async def lifespan(app: FastAPI):
 
     logger.info("application_ready")
     yield
-
     logger.info("application_shutting_down")
 
 
@@ -93,19 +112,37 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # ── Middleware ────────────────────────────────────────────────────────────
+    # ── Rate limiter ──────────────────────────────────────────────────────────
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    # ── CORS — restrict to known origins only ─────────────────────────────────
+    origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=origins,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
     )
+
     app.add_middleware(RequestLoggingMiddleware)
 
-    # ── Routers ───────────────────────────────────────────────────────────────
-    from app.routers import collections, companies, forecast, health, ingestion, market_data, query
+    # ── Security headers middleware ────────────────────────────────────────────
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        if settings.environment == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
 
+    # ── Routers ───────────────────────────────────────────────────────────────
+    from app.routers import auth, collections, companies, forecast, health, ingestion, market_data, query
+
+    app.include_router(auth.router)
     app.include_router(health.router)
     app.include_router(ingestion.router, prefix="/documents")
     app.include_router(query.router)
@@ -120,7 +157,7 @@ def create_app() -> FastAPI:
         logger.error("unhandled_exception", error=str(exc), path=str(request.url))
         return JSONResponse(
             status_code=500,
-            content={"detail": "Internal server error", "type": type(exc).__name__},
+            content={"detail": "An error occurred. Please try again or contact support."},
         )
 
     return app
