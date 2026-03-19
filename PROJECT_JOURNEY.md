@@ -1,10 +1,10 @@
-# Finance AI RAG System — Project Journey
+# QuantCortex — Project Journey
 
 **Author:** Palash Joshi
-**Project:** AI-Applied-ML-Financial-Project
+**Live Product:** [quantcortex.in](https://quantcortex.in)
 **GitHub:** https://github.com/Palash-Devo7/AI-Applied-ML-Financial-Project
 **Duration:** March 2026 (ongoing)
-**Stack:** Python 3.14 · FastAPI · FinBERT · ChromaDB · Groq (LLaMA 3.3 70B) · Tesseract OCR · Streamlit · yfinance · SQLite
+**Stack:** Python 3.12 · FastAPI · FinBERT · ChromaDB · Groq (LLaMA 3.3 70B) · Tesseract OCR · Next.js 15 · SQLite · BSE India
 
 ---
 
@@ -26,7 +26,10 @@
 14. [File Structure](#14-file-structure)
 15. [Key Design Patterns](#15-key-design-patterns)
 16. [Lessons Learned](#16-lessons-learned)
-17. [What's Next (Phase B onwards)](#17-whats-next-phase-b-onwards)
+17. [Next.js Frontend — Full Rebuild](#17-nextjs-frontend--full-rebuild)
+18. [Security Layer — Production Auth](#18-security-layer--production-auth)
+19. [Production Deployment](#19-production-deployment)
+20. [Vision: Market Impact Propagation System](#20-vision-market-impact-propagation-system)
 
 ---
 
@@ -1221,5 +1224,206 @@ Evaluated StockInsights AI API (₹6,000/month for 5,000 calls). BSE package pro
 
 ---
 
+---
+
+## 17. Next.js Frontend — Full Rebuild
+
+### Why we replaced Streamlit
+
+Streamlit was fast to prototype but hit hard limits in production:
+- No real routing — every page is a re-run of the full script
+- No persistent auth — session state lost on refresh
+- No streaming UI control — `st.write_stream` has no customisation
+- Looks like an internal tool, not a product
+
+**Decision:** Replace with Next.js 15 (App Router) + Tailwind v4 + shadcn/ui. Build a real product UI.
+
+### Design system
+
+Dark, finance-terminal aesthetic inspired by Stripe's dashboard:
+
+```css
+--background: #06060A      /* near-black base */
+--card: #0F0F17            /* surface */
+--border: #1A1A2E          /* subtle borders */
+--primary: #4F46E5         /* indigo accent */
+--muted-foreground: #6B7280
+```
+
+### Key engineering decisions
+
+**SSE streaming in React:**
+The backend sends typed JSON events over SSE:
+```
+data: {"type": "meta", "chunk_count": 8, "sources": [...]}
+data: {"type": "token", "text": "Tata Steel"}
+data: {"type": "token", "text": " reported..."}
+data: {"type": "done"}
+```
+
+Frontend parses each line, extracts `.text` only when `type === "token"`, appends to message state. This was non-trivial — initial implementation was displaying raw JSON.
+
+**Fire-and-forget company load:**
+Company loading takes 5–10 minutes (PDF download + OCR + embedding). UX pattern:
+1. User selects company → `loadCompany()` called without await
+2. Immediately navigate to `/company/[ticker]`
+3. Page shows ingestion progress banner with live polling (5s interval)
+4. When status changes (doc_count increases, prices_synced_at set) — auto-refresh data
+5. User never waits on a loading screen
+
+**Markdown in chat:**
+Backend prompt explicitly requests structured markdown. Frontend renders with `react-markdown` + `remark-gfm` — handles tables, headers, bold, code blocks, blockquotes.
+
+### Bugs fixed during frontend build
+
+| Bug | Root cause | Fix |
+|-----|-----------|-----|
+| Search dropdown not showing | Backend returns `{results: [...]}` not plain array | `data.results ?? []` |
+| Forecast crash — `agents undefined` | Response uses `agent_views[]` with `stance`, not `agents[]` with `signal` | Rewrote AgentView type |
+| Chat showing raw JSON | SSE events not parsed | Parse JSON, filter `type === "token"` |
+| Overview never updates | Financials fetched once on mount | Polling loop re-fetches on state change |
+| Port 8000 blocked | Windows system process reserved port | Switched to 8080 |
+| TypeScript error on `sector` | Backend has `group` field, not `sector` | Changed to `r.group` |
+
+---
+
+## 18. Security Layer — Production Auth
+
+### What was built
+
+When preparing for production, a full security layer was added from scratch:
+
+**Authentication:**
+- JWT tokens (python-jose, HS256) — stateless, no server-side session storage
+- bcrypt password hashing (passlib) — cost factor 12, salt auto-generated
+- API keys with `fr_` prefix — alternative auth for programmatic access
+- ULID for user IDs — time-sortable, URL-safe, no UUID collision concerns
+
+**Credit system:**
+- Trial users: 10 credits/day, resets midnight UTC
+- Admin users: unlimited (role-based bypass)
+- Credit costs: `/query` = 1, `/forecast/event` = 2, `/documents/upload` = 2
+- `check_and_consume()` → gate before request, `consume_after_success()` → deduct after success
+- This prevents charging users for failed requests
+
+**Rate limiting:**
+- slowapi (per-IP, Redis-compatible) — 20/min queries, 10/min forecasts, 5/min uploads
+- Extracted to `app/core/limiter.py` to avoid circular imports (main.py ↔ query.py)
+
+**CORS & headers:**
+- Origins restricted to known domains via env var `ALLOWED_ORIGINS`
+- `allow_credentials=False` (avoids cookie CSRF vectors)
+- Security headers: `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`
+- HSTS added in production environment only
+
+**Frontend auth:**
+- JWT stored in `sessionStorage` (survives tab refresh, cleared on tab close)
+- Module-level `_token` in `api.ts` — all requests automatically include Bearer header
+- `AuthProvider` restores token from sessionStorage on mount, validates with `/auth/me`
+- `AuthGuard` component redirects to `/auth/login` if no valid token
+- Credit counter in header refreshes after each credit-bearing operation
+
+### Key lesson
+
+The circular import problem: `query.py` imported `limiter` from `main.py`, which imports `query.py`. Fixed by creating `app/core/limiter.py` as a standalone module — a pattern applicable to any shared FastAPI dependency.
+
+---
+
+## 19. Production Deployment
+
+### Infrastructure
+
+```
+quantcortex.in (Vercel — Next.js)
+       ↓ HTTPS
+api.quantcortex.in (Hostinger VPS — FastAPI)
+       ↓
+  Nginx (reverse proxy, SSL termination)
+       ↓
+  uvicorn (127.0.0.1:8080)
+       ↓
+  systemd (auto-restart, runs as non-root user)
+```
+
+**VPS specs:** Ubuntu 24.04, 2 vCPU, 4GB RAM, 50GB NVMe (Hostinger KVM)
+
+**Why not serverless?**
+- ChromaDB requires persistent disk (file-based vector store)
+- SQLite requires persistent disk
+- FinBERT is 438MB loaded into RAM — cold starts would be unacceptable
+- Background tasks (PDF ingest, OCR) run for minutes — Lambda timeout = 15min max
+
+### Deployment steps (documented for reproducibility)
+1. Ubuntu 24.04, Python 3.12, Nginx, Certbot, Tesseract installed via apt
+2. Non-root `financerag` user — app never runs as root
+3. `.env` with production secrets — never committed to git
+4. `systemd` service with `Restart=always` — survives crashes and reboots
+5. `certbot --nginx` — automatic SSL, auto-renews via cron
+6. UFW firewall — only ports 22 (SSH), 80 (HTTP), 443 (HTTPS) open
+7. Vercel — GitHub push triggers automatic frontend deploy
+
+### Issues encountered
+- **bcrypt version conflict:** passlib 1.7.4 + bcrypt 4.x has `__about__` AttributeError on Python 3.12. Fixed: `pip install bcrypt==4.0.1`
+- **app/models/ in .gitignore:** `models/` pattern matched `app/models/`. Fixed: changed to `/models/` (anchored to root)
+- **Port 8000 blocked:** Windows system process held port 8000. Production uses 8080.
+- **BSE timeout on startup:** BSE securities cache times out for some stock groups (A, F). Non-fatal — loads partial cache (1800 securities) and continues.
+- **DNS propagation:** `api.quantcortex.in` A record took ~15 min to propagate before Certbot could verify domain ownership.
+
+---
+
+## 20. Vision: Market Impact Propagation System
+
+### The insight
+
+Current financial AI tools (Screener, Tickertape, Moneycontrol, even ChatGPT) show you data about a company in isolation. None of them answer:
+
+> *"Reliance Industries announced a refinery shutdown — which companies are affected, by how much, and over what timeframe?"*
+
+This requires understanding the **relationship graph** between companies — who supplies whom, who competes, which sectors are interdependent.
+
+### The system we're building
+
+```
+Event/News arrives
+       ↓
+Sentiment → Price Impact Model
+(quantify event severity and direction)
+       ↓
+GraphRAG — Company Relationship Graph (Phase C)
+(who is directly affected? supply chain? competitors? sector peers?)
+       ↓
+Anomaly Detector (Phase E)
+(are affected companies already showing financial stress?)
+       ↓
+Volatility Forecaster (Phase E)
+(predict high-volatility windows for each affected company)
+       ↓
+Earnings Surprise Predictor (Phase E)
+(will upcoming earnings be impacted?)
+       ↓
+Multi-Agent Synthesis (already built)
+(Bull/Bear/Macro → final propagation-aware forecast)
+```
+
+### Why this is genuinely novel
+
+No retail platform does impact propagation. It requires:
+1. A knowledge graph of company relationships (not just price data)
+2. ML models trained on Indian market data (not US-market models)
+3. Integration of unstructured (filings, news) + structured (financials, prices) data
+4. A retrieval system that can traverse the graph (GraphRAG)
+
+### Build order
+
+| Phase | What | Depends on |
+|-------|------|-----------|
+| C | GraphRAG — company relationship graph | Core RAG (done) |
+| D | Sentiment → Price Impact model | Graph (Phase C) |
+| E | Volatility Forecaster + Anomaly Detector | Historical data (done) + Graph |
+| F | Earnings Surprise Predictor | All of above as features |
+| G | Full propagation pipeline | All phases |
+
+---
+
 *Document last updated: March 2026*
-*System version: 1.4.0 (multi-agent forecasting + BSE auto-ingest + provider pattern)*
+*System version: 2.0.0 (Next.js frontend + JWT auth + production deployment at quantcortex.in)*

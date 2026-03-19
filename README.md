@@ -1,194 +1,227 @@
-# Finance AI RAG System
+# QuantCortex — AI Research Platform for Indian Equities
 
-A production-oriented Finance AI Assistant for BSE-listed Indian companies. Type a ticker, the system auto-fetches financials and filings from BSE India, and you can ask natural language questions or get multi-agent event forecasts — no manual document uploads needed.
+> **Live at [quantcortex.in](https://quantcortex.in)**
 
-**Stack:** Python 3.14 · FastAPI · FinBERT · ChromaDB · Groq (LLaMA 3.3 70B) · SQLite · BSE India · Streamlit
+An end-to-end AI-powered financial research platform built specifically for BSE-listed Indian companies. Search any BSE ticker — the system auto-fetches filings, financials, and announcements, then lets you ask natural language questions or run multi-agent event forecasts. No manual uploads needed.
 
 ---
 
-## What it does
+## Demo
 
-- **Auto-ingests company data** — enter a BSE ticker (e.g. `TATASTEEL`), the system resolves the scrip code, fetches financials to SQLite, downloads recent filings (Annual Reports, Results, Board Meeting PDFs) from BSE India, and ingests them into the vector store automatically
-- **Answers financial questions** — hybrid RAG (FinBERT vector search + BM25 + Reciprocal Rank Fusion) over ingested documents, enriched with structured financial tables from SQLite
-- **Multi-agent forecasting** — Bull, Bear, and Macro analyst agents run in parallel and a Synthesizer combines their views into a structured event forecast
-- **Streaming responses** — answers stream token-by-token via SSE, sources appear after completion
-- **Pluggable LLMs** — switch between Groq (free, default), DeepSeek, or Claude via a single env var
+**[quantcortex.in](https://quantcortex.in)** — register a free trial account (10 queries/day)
+
+Try: Search `TATASTEEL` or `RELIANCE` → ask a question → run a forecast
+
+---
+
+## What Makes This Different
+
+| Feature | QuantCortex | Generic RAG / ChatGPT |
+|---------|------------|----------------------|
+| BSE-specific data pipeline | Auto-fetches filings from BSE India | Manual copy-paste |
+| Finance-tuned embeddings | FinBERT (domain-specific, 768-dim) | General-purpose embeddings |
+| Hybrid retrieval | Vector + BM25 + RRF fusion | Vector-only |
+| Multi-agent forecasting | Bull + Bear + Macro → Synthesis | Single LLM response |
+| Structured financial context | SQLite financials injected into RAG context | No structured data |
+| India-specific | BSE scrip codes, INR, Indian fiscal year | US-market focused |
 
 ---
 
 ## Architecture
 
-### Query flow
+### Query Flow
 ```
-POST /query  or  POST /query/stream (SSE)
-  → MCPService: classify query → RISK | REVENUE | MACRO | COMPARATIVE | HISTORICAL | GENERAL
-  → MCPService: build ChromaDB metadata filter
+User question
+  → MCPService: classify query type (RISK / REVENUE / MACRO / COMPARATIVE / HISTORICAL)
+  → MCPService: build ChromaDB metadata filter (company, year, report type)
   → SQLite: fetch structured financials → prepend to context
-  → EmbeddingService: FinBERT CLS embed
-  → RetrievalService: vector search + BM25 + RRF fusion (α=0.7)
-  → MCPService: assemble context (dedup, sort, cite)
-  → GenerationService: LLM answer
+  → EmbeddingService: FinBERT CLS embed (768-dim, L2-normalized)
+  → RetrievalService: ChromaDB vector search + BM25 + Reciprocal Rank Fusion (α=0.7)
+  → MCPService: assemble context (dedup, sort by score, cite sources)
+  → GenerationService: LLM answer (streaming SSE)
 ```
 
-### Company auto-load flow
+### Company Auto-Load Flow
 ```
 POST /companies/load {"ticker": "TATASTEEL"}
   → Background task: CompanyLoader
-    → BSEProvider: ticker → scrip_code
-    → BSEProvider: fetch financials → SQLite
-    → BSEProvider: fetch live price → SQLite
-    → BSEProvider: get announcements → filter (Results, Annual Report, Board Meeting)
-    → BSEProvider: download PDFs [session warmup required]
-    → IngestionService: parse → chunk → embed → ChromaDB
+    → BSEProvider: ticker → scrip_code (BSE India API)
+    → BSEProvider: fetch financials → SQLite upsert
+    → BSEProvider: fetch live price → stock_prices upsert
+    → BSEProvider: get announcements → filter relevant PDFs
+    → BSEProvider: download PDFs (with session warmup for Akamai bypass)
+    → IngestionService: pypdf → pdfplumber → Tesseract OCR (3-layer fallback)
+    → Chunker: section-aware → recursive char split (480 tok / 64 overlap)
+    → EmbeddingService: FinBERT embed in batches
+    → ChromaDB: upsert with rich metadata
     → company_registry: status = ready
 ```
 
-### Forecast flow
+### Multi-Agent Forecast Flow
 ```
-POST /forecast/event {"company": "Tata Steel", "event_type": "...", "event_description": "..."}
-  → asyncio.gather: Bull agent | Bear agent | Macro agent  (parallel LLM calls)
-  → Synthesizer agent: combines views → base / bull / bear case + risks + catalysts
+POST /forecast/event {"company": "Tata Steel", "event_type": "capacity_expansion", ...}
+  → asyncio.gather (parallel):
+      Bull Agent    → optimistic analysis with key catalysts
+      Bear Agent    → risk analysis with downside scenarios
+      Macro Agent   → sector + macro environment assessment
+  → Synthesizer Agent → base / bull / bear case + key risks + key catalysts
 ```
 
 ---
 
-## Stack
+## Tech Stack
 
-| Component | Technology |
-|---|---|
-| Embeddings | ProsusAI/finbert (CLS pooler_output, L2-normalized, dim=768) |
-| LLM | Groq llama-3.3-70b (default) · DeepSeek · Claude — switchable via env var |
-| Vector DB | ChromaDB (persistent, cosine similarity, metadata filtering) |
-| Hybrid Retrieval | ChromaDB vector + BM25 (rank-bm25) + Reciprocal Rank Fusion |
-| Structured DB | SQLite — financials, stock prices, events, ticker map, company registry |
-| Market Data | BSE India (`bse` package) for auto-ingest · yfinance for historical prices |
-| Backend | FastAPI async + Uvicorn |
-| Frontend | Streamlit (CHAT / FORECAST / DOCUMENTS / KNOWLEDGE BASE tabs) |
-| Monitoring | structlog (JSON) + Prometheus + Grafana |
-| OCR | pypdf → pdfplumber → Tesseract (3-layer fallback) |
+| Layer | Technology | Why |
+|-------|-----------|-----|
+| **Embeddings** | ProsusAI/FinBERT (CLS pooler, dim=768) | Finance-domain pre-trained, outperforms general embeddings on financial text |
+| **LLM** | Groq LLaMA-3.3-70B (default) · Claude · DeepSeek | Switchable via env var — no vendor lock-in |
+| **Vector DB** | ChromaDB (persistent, cosine similarity) | Metadata filtering for company/year/report type |
+| **Hybrid Retrieval** | ChromaDB + BM25 + Reciprocal Rank Fusion | Combines semantic and keyword search, significantly improves recall |
+| **Structured DB** | SQLite — financials, stock prices, events, company registry | Fast structured financial context injection |
+| **Market Data** | BSE India (`bse` package) + yfinance | BSE filings auto-ingest + historical prices |
+| **Backend** | FastAPI (async) + Uvicorn | High-performance async API |
+| **Frontend** | Next.js 15 (App Router) + Tailwind v4 + shadcn/ui | Modern React, streaming SSE support |
+| **Auth** | JWT (python-jose) + bcrypt (passlib) | Stateless auth, secure password hashing |
+| **Rate Limiting** | slowapi (per-IP) | Abuse prevention |
+| **OCR** | pypdf → pdfplumber → Tesseract (3-layer fallback) | Handles scanned PDFs, image-heavy annual reports |
+| **Monitoring** | structlog (JSON) + Prometheus + Grafana | Production observability |
+| **Deployment** | Vercel (frontend) + Hostinger VPS + Nginx + Certbot | Full production stack |
 
 ---
 
-## Quick Start
+## Features
 
-### 1. Install dependencies
+### Core RAG
+- Hybrid retrieval: FinBERT vector search + BM25 keyword + RRF fusion
+- Query classification — routes to appropriate retrieval strategy
+- Structured financial data injection from SQLite into RAG context
+- Streaming responses via Server-Sent Events (SSE)
+- Source citations with page numbers, section types, relevance scores
 
-```bash
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements-dev.txt
-```
+### BSE Auto-Ingest
+- Type a ticker → system resolves BSE scrip code automatically
+- Fetches Annual Reports, Quarterly Results, Board Meeting PDFs from BSE
+- 3-layer OCR fallback handles any PDF quality
+- Background processing with real-time status polling
 
-### 2. Configure environment
+### Multi-Agent Forecasting
+- Three analyst agents run in parallel (asyncio.gather)
+- Bull Agent, Bear Agent, Macro Agent each produce independent analysis
+- Synthesizer combines into structured forecast with base/bull/bear cases
+- Returns key risks, key catalysts, confidence assessment
 
-```bash
-cp .env.example .env
-```
+### Security & Auth
+- JWT-based authentication with bcrypt password hashing
+- Credit-based usage system (10 credits/day for trial users)
+- Per-endpoint rate limiting (20/min queries, 10/min forecasts, 5/min uploads)
+- CORS restricted to known origins
+- Security headers (X-Content-Type-Options, X-Frame-Options, HSTS in production)
+- Admin role with unlimited access
 
-Edit `.env` — at minimum set your LLM API key:
-
-```env
-LLM_PROVIDER=groq           # groq | deepseek | claude
-GROQ_API_KEY=gsk_...        # free at console.groq.com
-```
-
-### 3. Run the backend
-
-```bash
-python -m uvicorn app.main:app --reload --port 8000
-```
-
-### 4. Run the UI (separate terminal)
-
-```bash
-streamlit run ui/app.py
-```
-
-Open http://localhost:8501
-
-### 5. Load a company and query
-
-In the **FORECAST** tab, open "LOAD COMPANY DATA", enter a BSE ticker (e.g. `TATASTEEL`), click Fetch & Ingest. Poll status until ready, then switch to **CHAT** and ask questions.
-
-Or via API:
-
-```bash
-# Load a company
-curl -X POST http://localhost:8000/companies/load \
-  -H "Content-Type: application/json" \
-  -d '{"ticker": "TATASTEEL"}'
-
-# Poll until ready
-curl http://localhost:8000/companies/status/TATASTEEL
-
-# Query
-curl -X POST http://localhost:8000/query \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What was Tata Steel revenue in FY2024?", "company": "Tata Steel"}'
-```
+### Production
+- Deployed on Hostinger VPS (Ubuntu 24.04) + Nginx reverse proxy
+- SSL via Let's Encrypt (auto-renews)
+- systemd service with auto-restart on crash
+- UFW firewall (SSH + HTTP/HTTPS only)
+- Frontend on Vercel with auto-deploy from GitHub
 
 ---
 
 ## API Reference
 
-### Core
+All endpoints require `Authorization: Bearer <token>` (except `/health` and `/auth/*`).
 
+### Auth
 | Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | Health check |
-| `GET` | `/metrics` | Prometheus metrics |
-| `POST` | `/documents/upload` | Manually upload a PDF (202, background) |
-| `POST` | `/query` | Financial question → answer + sources |
-| `POST` | `/query/stream` | Same but SSE streaming |
+|--------|------|-------------|
+| `POST` | `/auth/register` | Create trial account → JWT + API key |
+| `POST` | `/auth/login` | Login → JWT + API key |
+| `GET` | `/auth/me` | User info + credit summary |
 
-### Company auto-load
+### Query
+| Method | Path | Credits | Description |
+|--------|------|---------|-------------|
+| `POST` | `/query` | 1 | Financial question → answer + sources |
+| `POST` | `/query/stream` | 1 | Same but token-by-token SSE streaming |
 
+### Companies
+| Method | Path | Credits | Description |
+|--------|------|---------|-------------|
+| `POST` | `/companies/load` | 1 | Auto-fetch + ingest BSE ticker (background) |
+| `GET` | `/companies/status/{ticker}` | 0 | Load status: pending / loading / ready |
+| `GET` | `/companies/search?q=` | 0 | Search BSE companies by name or ticker |
+| `GET` | `/companies/list` | 0 | All registered companies |
+
+### Forecast
+| Method | Path | Credits | Description |
+|--------|------|---------|-------------|
+| `POST` | `/forecast/event` | 2 | Multi-agent event impact forecast |
+
+### Market Data
 | Method | Path | Description |
-|---|---|---|
-| `POST` | `/companies/load` | Auto-fetch + ingest a BSE ticker (202, background) |
-| `GET` | `/companies/status/{ticker}` | Load status: pending / loading / ready / failed |
-| `GET` | `/companies/list` | All registered companies |
-
-### Market data
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/market/fetch/sync` | Fetch financials + prices (waits) |
+|--------|------|-------------|
 | `GET` | `/market/financials/{company}` | Annual financials history |
-| `GET` | `/market/financials/{company}/quarterly` | Quarterly breakdown |
 | `GET` | `/market/stock/{ticker}/summary` | 52-week range + latest close |
-| `POST` | `/market/events` | Log a financial event |
-| `GET` | `/market/events/similar/{type}` | Find analogous historical events |
-
-### Forecasting
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/forecast/event` | Multi-agent event impact forecast |
-
-### Collections
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/collections` | List ChromaDB collections |
-| `DELETE` | `/collections/{name}` | Delete a collection |
 
 ---
 
-## Configuration Reference
+## Local Development
 
-| Variable | Default | Description |
-|---|---|---|
-| `LLM_PROVIDER` | `groq` | `groq` \| `deepseek` \| `claude` |
-| `GROQ_API_KEY` | — | Required if `LLM_PROVIDER=groq` |
-| `DEEPSEEK_API_KEY` | — | Required if `LLM_PROVIDER=deepseek` |
-| `ANTHROPIC_API_KEY` | — | Required if `LLM_PROVIDER=claude` |
-| `EMBEDDING_MODEL` | `ProsusAI/finbert` | HuggingFace model ID |
-| `RETRIEVAL_TOP_K` | `10` | Chunks returned per query |
-| `RETRIEVAL_RRF_ALPHA` | `0.7` | Vector weight in RRF fusion |
-| `MAX_CONTEXT_TOKENS` | `6000` | Max tokens sent to LLM |
-| `CHUNK_SIZE_TOKENS` | `480` | Max tokens per chunk |
-| `COLLECT_TRAINING_DATA` | `false` | Log QA pairs to JSONL for Phase 2 |
+### Prerequisites
+- Python 3.11+
+- Node.js 18+
+- Tesseract OCR (`brew install tesseract` / `apt install tesseract-ocr`)
+
+### Backend
+```bash
+git clone https://github.com/YOUR_USERNAME/AI-Applied-ML-Financial-Project
+cd AI-Applied-ML-Financial-Project
+
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+
+cp .env.example .env
+# Edit .env — set GROQ_API_KEY at minimum
+
+python -m uvicorn app.main:app --reload --port 8080
+# API docs at http://localhost:8080/docs
+```
+
+### Frontend
+```bash
+cd finance-ui
+npm install
+
+# Create finance-ui/.env.local
+echo "NEXT_PUBLIC_API_URL=http://localhost:8080" > .env.local
+
+npm run dev
+# Open http://localhost:3000
+```
+
+### Quick API test
+```bash
+# Register
+curl -X POST http://localhost:8080/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email": "test@example.com", "password": "password123"}'
+
+# Use the token from above
+TOKEN="your_token_here"
+
+# Load a company
+curl -X POST http://localhost:8080/companies/load \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"ticker": "TATASTEEL"}'
+
+# Ask a question
+curl -X POST http://localhost:8080/query \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What was Tata Steel revenue in FY2024?", "company": "Tata Steel"}'
+```
 
 ---
 
@@ -197,69 +230,98 @@ curl -X POST http://localhost:8000/query \
 ```
 finance-rag/
 ├── app/
-│   ├── main.py                      # FastAPI factory, lifespan, router registration
-│   ├── config.py                    # Pydantic BaseSettings (.env)
-│   ├── dependencies.py              # @lru_cache singletons (embedding, vector, llm, etc.)
-│   ├── data/
-│   │   └── financial_db.py          # SQLite: financials, prices, events, company_registry
-│   ├── routers/
-│   │   ├── query.py                 # POST /query + /query/stream
-│   │   ├── ingestion.py             # POST /documents/upload
-│   │   ├── forecast.py              # POST /forecast/event
-│   │   ├── companies.py             # Company auto-load endpoints
-│   │   ├── market_data.py           # Market data endpoints
-│   │   ├── collections.py           # ChromaDB collection management
-│   │   └── health.py                # GET /health
-│   ├── services/
-│   │   ├── embedding_service.py     # FinBERT async (ThreadPoolExecutor)
-│   │   ├── retrieval_service.py     # Hybrid vector + BM25 + RRF
-│   │   ├── generation_service.py    # LLM backends (Groq/DeepSeek/Claude) + Protocol
-│   │   ├── ingestion_service.py     # parse → chunk → embed → store
-│   │   ├── query_service.py         # Full query pipeline
-│   │   ├── mcp_service.py           # Query classification + context assembly
-│   │   ├── forecast_service.py      # Multi-agent forecasting engine
-│   │   ├── market_data_service.py   # yfinance integration
-│   │   ├── company_loader.py        # BSE auto-ingest orchestrator
-│   │   └── providers/
-│   │       ├── base.py              # MarketDataProvider Protocol
-│   │       └── bse_provider.py      # BSE India implementation
+│   ├── main.py                    # FastAPI factory, lifespan, middleware
+│   ├── config.py                  # Pydantic BaseSettings (.env)
+│   ├── dependencies.py            # @lru_cache singletons
 │   ├── core/
-│   │   ├── chunker.py               # Section-aware + recursive chunking
-│   │   ├── document_parser.py       # pypdf → pdfplumber → Tesseract OCR
-│   │   ├── metadata_extractor.py    # Regex metadata extraction
-│   │   ├── vector_store.py          # ChromaDB async-safe wrapper
-│   │   └── prompts.py               # Prompt templates
-│   ├── models/                      # Pydantic request/response models
-│   ├── monitoring/                  # structlog + Prometheus middleware
-│   └── phase2/                      # LoRA fine-tuning hooks (stubs)
-├── ui/
-│   └── app.py                       # Streamlit UI (4 tabs)
-├── tests/
-│   ├── unit/                        # Pure Python, no external services
-│   └── integration/                 # Mocked embedding/vector/LLM
-├── docker/                          # Dockerfile + docker-compose
-├── monitoring/                      # Prometheus + Grafana config
-├── scripts/                         # Seed and benchmark utilities
-└── data/                            # chroma_db/, sample_docs/ (git-ignored)
+│   │   ├── auth_deps.py           # get_current_user, require_credits, consume_after_success
+│   │   ├── security.py            # JWT create/decode, bcrypt hash/verify, API key gen
+│   │   ├── limiter.py             # Shared slowapi Limiter instance
+│   │   ├── chunker.py             # Section-aware + recursive chunking
+│   │   ├── document_parser.py     # 3-layer OCR: pypdf → pdfplumber → Tesseract
+│   │   ├── metadata_extractor.py  # Regex: company, year, quarter, section_type
+│   │   ├── vector_store.py        # ChromaDB async-safe wrapper
+│   │   └── prompts.py             # Structured markdown prompt templates
+│   ├── data/
+│   │   ├── financial_db.py        # SQLite: financials, stock_prices, company_registry
+│   │   └── auth_db.py             # SQLite: users, daily_credits, credit_log
+│   ├── routers/
+│   │   ├── auth.py                # POST /auth/register, /auth/login, GET /auth/me
+│   │   ├── query.py               # POST /query + /query/stream (SSE)
+│   │   ├── forecast.py            # POST /forecast/event
+│   │   ├── companies.py           # Company auto-load endpoints
+│   │   ├── ingestion.py           # POST /documents/upload
+│   │   ├── market_data.py         # Market data endpoints
+│   │   ├── collections.py         # ChromaDB collection management
+│   │   └── health.py              # GET /health
+│   ├── services/
+│   │   ├── embedding_service.py   # FinBERT async (ThreadPoolExecutor, CPU-bound)
+│   │   ├── retrieval_service.py   # Hybrid vector + BM25 + RRF
+│   │   ├── generation_service.py  # LLM backends (Protocol pattern — Groq/DeepSeek/Claude)
+│   │   ├── ingestion_service.py   # parse → chunk → embed → store pipeline
+│   │   ├── query_service.py       # Full query pipeline
+│   │   ├── mcp_service.py         # Query classification + context assembly
+│   │   ├── forecast_service.py    # Multi-agent forecasting engine
+│   │   ├── company_loader.py      # BSE auto-ingest orchestrator
+│   │   └── providers/
+│   │       ├── base.py            # MarketDataProvider Protocol
+│   │       └── bse_provider.py    # BSE India implementation
+│   ├── models/                    # Pydantic request/response models
+│   └── monitoring/                # structlog + Prometheus middleware
+├── finance-ui/                    # Next.js 15 frontend
+│   ├── app/
+│   │   ├── auth/login/page.tsx    # Login + Register (tabbed)
+│   │   ├── company/[ticker]/      # Company research page
+│   │   └── page.tsx               # Home + search
+│   ├── components/
+│   │   ├── header.tsx             # Credit counter + logout
+│   │   ├── auth-guard.tsx         # Route protection
+│   │   └── search-bar.tsx         # Debounced BSE company search
+│   └── lib/
+│       ├── api.ts                 # API client (Bearer token, SSE streaming)
+│       └── auth.tsx               # Auth context + sessionStorage persistence
+├── monitoring/                    # Prometheus + Grafana config
+├── docker/                        # Dockerfile + docker-compose
+└── requirements.txt
 ```
 
 ---
 
-## Monitoring (Docker)
+## Roadmap
 
-```bash
-cd docker && docker-compose up -d
-```
+### Completed
+- [x] Core RAG pipeline — FinBERT + ChromaDB + BM25/RRF hybrid retrieval
+- [x] BSE auto-ingest — ticker → scrip code → filings → PDFs → vector store
+- [x] Historical data layer — SQLite financials, stock prices, events
+- [x] Multi-agent forecasting — Bull/Bear/Macro parallel agents + Synthesizer
+- [x] Next.js frontend — dark UI, streaming chat, forecast UI, financial charts
+- [x] JWT auth + credit system + rate limiting
+- [x] Production deployment — quantcortex.in (Vercel + VPS + SSL)
 
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000 (admin / changeme)
-
-Pre-built dashboard shows request latency, query rate by type, LLM token usage, ChromaDB collection size.
+### In Progress / Planned
+- [ ] **Phase C — GraphRAG:** NetworkX company relationship graph (suppliers, competitors, sectors) — enables impact propagation analysis
+- [ ] **Phase D — Market Impact Propagation:** Track how news/events ripple through connected companies and sectors
+- [ ] **Phase E — ML Models:** Earnings surprise predictor, volatility forecaster, sentiment → price impact model trained on BSE historical data
+- [ ] **Phase F — Brokerage Integration:** Zerodha Kite Connect for portfolio-aware research
 
 ---
 
-## Phase 2 Roadmap
+## Key Design Decisions
 
-- **Phase C — GraphRAG:** NetworkX knowledge graph of company relationships (competitors, suppliers, sectors) for richer context assembly
-- **Phase D — Brokerage Integration:** Zerodha Kite Connect OAuth for real portfolio data
-- **Fine-tuning hooks** (`app/phase2/`): Set `COLLECT_TRAINING_DATA=true` to log QA pairs → LoRA training pipeline ready to plug in
+**Why FinBERT over OpenAI embeddings?**
+Financial text has domain-specific vocabulary (EBITDA, scrip codes, BSE-specific terms). FinBERT was pre-trained on financial corpora and produces significantly better semantic similarity for financial document retrieval.
+
+**Why hybrid retrieval (vector + BM25 + RRF)?**
+Pure vector search misses exact term matches (ticker symbols, specific financial ratios). Pure BM25 misses semantic similarity. RRF fusion gets the best of both — tested on financial Q&A, it consistently outperforms either alone.
+
+**Why SQLite for structured data?**
+Financial statements have structured, predictable schemas. Putting them in SQLite and injecting them directly into the LLM context is more reliable than embedding them — the LLM gets exact numbers, not approximations from chunked text.
+
+**Why the Protocol pattern for LLM backends?**
+`GenerationService` depends on a `ModelBackend` Protocol, not a concrete class. Switching between Groq, DeepSeek, and Claude requires zero changes to the query pipeline — just an env var.
+
+---
+
+## License
+
+MIT
