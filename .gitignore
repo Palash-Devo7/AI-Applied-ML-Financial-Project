@@ -13,7 +13,7 @@ data/financial_data.db
 *.db-wal
 
 # Models (downloaded at runtime)
-models/
+/models/
 
 # Python
 __pycache__/
