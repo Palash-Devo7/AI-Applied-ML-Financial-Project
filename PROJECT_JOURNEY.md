@@ -30,6 +30,7 @@
 18. [Security Layer — Production Auth](#18-security-layer--production-auth)
 19. [Production Deployment](#19-production-deployment)
 20. [Vision: Market Impact Propagation System](#20-vision-market-impact-propagation-system)
+21. [Email Verification & Auth Hardening](#21-email-verification--auth-hardening)
 
 ---
 
@@ -1425,5 +1426,118 @@ No retail platform does impact propagation. It requires:
 
 ---
 
+## 21. Email Verification & Auth Hardening
+
+### The problem
+
+After shipping JWT auth and the Next.js frontend, the system had a gap: anyone could register with a fake email and consume credits. There was also no way to distinguish verified real users from throwaway accounts — important for trust, spam prevention, and future paid tiers.
+
+### What we built
+
+**Backend — transactional email verification via Resend:**
+
+```
+POST /auth/register
+  → create user (is_verified=0)
+  → generate secrets.token_urlsafe(32) → store in verification_tokens table (24h expiry)
+  → send_verification_email() via Resend API from noreply@quantcortex.in
+  → return JWT (user can browse but not consume credits)
+
+GET /auth/verify?token=xxx
+  → validate token: not used, not expired
+  → mark token used=1, user is_verified=1
+  → send_welcome_email()
+
+POST /auth/resend-verification   — invalidates old token, sends fresh one
+GET /auth/admin/users            — admin-only, returns all users + credit usage stats
+```
+
+**Database additions:**
+
+```sql
+ALTER TABLE users ADD COLUMN is_verified INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE verification_tokens (
+    token       TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    used        INTEGER NOT NULL DEFAULT 0
+);
+```
+
+**Auth dependency chain tightened:**
+
+```python
+get_current_user      # validates JWT / API key
+    ↓
+require_verified      # 403 if email not verified (admin exempt)
+    ↓
+require_credits       # checks daily limit
+    ↓
+consume_after_success # deducts credit only on successful response
+```
+
+### Key bugs hit and fixed
+
+**structlog `event=` keyword conflict:**
+
+```python
+# BROKEN — structlog uses 'event' as its positional arg internally
+logger.warning("resend_api_key_not_set", event="email_skipped")
+# → TypeError: BoundLogger.warning() got multiple values for argument 'event'
+
+# FIXED
+logger.warning("resend_api_key_not_set_email_skipped")
+```
+
+Every register call was returning 500 until this was caught.
+
+**`ALTER TABLE` inside `executescript`:** SQLite's `executescript()` commits pending transactions and doesn't mix DDL + DML. Had to split into separate `executescript` (for `CREATE TABLE`) and a `try/except` block (for `ALTER TABLE`).
+
+### Frontend verification UX — three iterations
+
+**Iteration 1 (broken):** On successful verification, always redirected to `/auth/login` — even when the user was already logged in. Forced an unnecessary second login.
+
+**Iteration 2 (broken):** Checked `sessionStorage` for an existing token, attempted `window.close()` if logged in. Two problems:
+1. `sessionStorage` is tab-scoped — the verify tab (opened from email) always has an empty session, so the check always returned false
+2. Browsers block `window.close()` on tabs not opened via `window.open()` — email clients open tabs manually, so the call silently failed, leaving the user back on Gmail
+
+**Iteration 3 (working):**
+
+*Switch `sessionStorage` → `localStorage`* across the entire auth layer. `localStorage` is shared across all tabs of the same origin, so the verify tab correctly reads the existing login.
+
+*Redirect instead of close, + BroadcastChannel for instant cross-tab sync:*
+
+```typescript
+// verify/page.tsx — after successful verification:
+try { new BroadcastChannel("auth").postMessage("verified"); } catch {}
+setTimeout(() => router.replace(alreadyLoggedIn ? "/" : "/auth/login"), 2000);
+
+// lib/auth.tsx — AuthProvider:
+channel = new BroadcastChannel("auth");
+channel.onmessage = (e) => { if (e.data === "verified") refresh(); };
+```
+
+The verify tab navigates to `/` (user stays in the app). Any other open app tabs receive the signal and immediately call `/auth/me` — the unverified banner disappears without user action.
+
+A `visibilitychange` listener provides a fallback for cross-device scenarios (verify on phone, app open on desktop) — the banner clears the next time the desktop tab is focused.
+
+### Final verified UX flow
+
+```
+Register → JWT issued, yellow "Please verify your email" banner appears
+     ↓
+User clicks verify link in email → new tab opens
+     ↓
+"Email verified! Taking you back to the app..." (2 sec)
+     ↓
+Verify tab redirects to /
+Original tab receives BroadcastChannel signal → calls /auth/me
+     ↓
+is_verified: true → banner gone, full access unlocked
+```
+
+---
+
 *Document last updated: March 2026*
-*System version: 2.0.0 (Next.js frontend + JWT auth + production deployment at quantcortex.in)*
+*System version: 2.1.0 (Email verification + auth hardening + localStorage + BroadcastChannel UX)*
