@@ -32,22 +32,31 @@ def _get_conn() -> sqlite3.Connection:
 
 
 def init_auth_db() -> None:
-    """Create tables and default admin user."""
+    """Create tables and run migrations."""
     with _lock, _get_conn() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS users (
-                id          TEXT PRIMARY KEY,
-                email       TEXT UNIQUE NOT NULL,
+                id            TEXT PRIMARY KEY,
+                email         TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
-                role        TEXT NOT NULL DEFAULT 'trial',
-                api_key     TEXT UNIQUE,
-                is_active   INTEGER NOT NULL DEFAULT 1,
-                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+                role          TEXT NOT NULL DEFAULT 'trial',
+                api_key       TEXT UNIQUE,
+                is_active     INTEGER NOT NULL DEFAULT 1,
+                is_verified   INTEGER NOT NULL DEFAULT 0,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS verification_tokens (
+                token       TEXT PRIMARY KEY,
+                user_id     TEXT NOT NULL,
+                expires_at  TEXT NOT NULL,
+                used        INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (user_id) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS daily_credits (
-                user_id     TEXT NOT NULL,
-                date        TEXT NOT NULL,
+                user_id      TEXT NOT NULL,
+                date         TEXT NOT NULL,
                 credits_used INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (user_id, date),
                 FOREIGN KEY (user_id) REFERENCES users(id)
@@ -63,15 +72,24 @@ def init_auth_db() -> None:
             );
         """)
 
+    # Migration: add is_verified to existing installs (no-op if already exists)
+    try:
+        with _lock, _get_conn() as conn:
+            conn.execute("ALTER TABLE users ADD COLUMN is_verified INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
+
 
 # ─── Users ────────────────────────────────────────────────────────────────────
 
 def create_user(email: str, password_hash: str, role: str = "trial", api_key: Optional[str] = None) -> dict:
     uid = str(ULID())
+    # Admin users are auto-verified
+    is_verified = 1 if role == "admin" else 0
     with _lock, _get_conn() as conn:
         conn.execute(
-            "INSERT INTO users (id, email, password_hash, role, api_key) VALUES (?, ?, ?, ?, ?)",
-            (uid, email.lower().strip(), password_hash, role, api_key),
+            "INSERT INTO users (id, email, password_hash, role, api_key, is_verified) VALUES (?, ?, ?, ?, ?, ?)",
+            (uid, email.lower().strip(), password_hash, role, api_key, is_verified),
         )
     return get_user_by_id(uid)
 
@@ -105,6 +123,73 @@ def user_exists(email: str) -> bool:
     with _get_conn() as conn:
         row = conn.execute("SELECT id FROM users WHERE email = ?", (email.lower().strip(),)).fetchone()
     return row is not None
+
+
+def verify_user(user_id: str) -> None:
+    """Mark user as verified."""
+    with _lock, _get_conn() as conn:
+        conn.execute("UPDATE users SET is_verified = 1 WHERE id = ?", (user_id,))
+
+
+# ─── Verification tokens ───────────────────────────────────────────────────────
+
+def create_verification_token(user_id: str) -> str:
+    """Generate a 24-hour verification token."""
+    import secrets
+    from datetime import timedelta
+    token = secrets.token_urlsafe(32)
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+    with _lock, _get_conn() as conn:
+        # Invalidate any existing unused tokens for this user
+        conn.execute(
+            "UPDATE verification_tokens SET used = 1 WHERE user_id = ? AND used = 0",
+            (user_id,),
+        )
+        conn.execute(
+            "INSERT INTO verification_tokens (token, user_id, expires_at) VALUES (?, ?, ?)",
+            (token, user_id, expires_at),
+        )
+    return token
+
+
+def consume_verification_token(token: str) -> Optional[str]:
+    """
+    Validate and consume a verification token.
+    Returns user_id if valid, None if invalid/expired/used.
+    """
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT user_id, expires_at, used FROM verification_tokens WHERE token = ?",
+            (token,),
+        ).fetchone()
+
+    if not row:
+        return None
+    if row["used"]:
+        return None
+    if datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc):
+        return None
+
+    with _lock, _get_conn() as conn:
+        conn.execute("UPDATE verification_tokens SET used = 1 WHERE token = ?", (token,))
+
+    return row["user_id"]
+
+
+# ─── Admin ─────────────────────────────────────────────────────────────────────
+
+def list_all_users() -> list[dict]:
+    """Return all users with credit summary — admin only."""
+    with _get_conn() as conn:
+        rows = conn.execute(
+            """SELECT u.id, u.email, u.role, u.is_verified, u.is_active, u.created_at,
+                      COALESCE(dc.credits_used, 0) as credits_used_today
+               FROM users u
+               LEFT JOIN daily_credits dc
+                 ON u.id = dc.user_id AND dc.date = date('now')
+               ORDER BY u.created_at DESC"""
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # ─── Credits ──────────────────────────────────────────────────────────────────

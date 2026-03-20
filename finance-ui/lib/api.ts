@@ -25,7 +25,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     if (res.status === 401 && typeof window !== "undefined") {
       clearAuthToken();
-      sessionStorage.removeItem("auth_token");
+      localStorage.removeItem("auth_token");
       window.location.href = "/auth/login";
     }
     const body = await res.json().catch(() => ({}));
@@ -41,6 +41,7 @@ export interface AuthUser {
   email: string;
   role: string;
   api_key?: string;
+  is_verified?: boolean;
 }
 
 export interface Credits {

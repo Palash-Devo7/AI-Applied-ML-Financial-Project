@@ -33,9 +33,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading: true,
   });
 
-  // Restore token from sessionStorage on mount
+  // Restore token from localStorage on mount (shared across tabs)
   useEffect(() => {
-    const saved = sessionStorage.getItem("auth_token");
+    const saved = localStorage.getItem("auth_token");
     if (!saved) {
       setState((s) => ({ ...s, loading: false }));
       return;
@@ -47,21 +47,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       )
       .catch(() => {
         clearAuthToken();
-        sessionStorage.removeItem("auth_token");
+        localStorage.removeItem("auth_token");
         setState({ token: null, user: null, credits: null, loading: false });
       });
   }, []);
 
+  // Refresh user data when tab regains focus or receives verified signal from another tab
+  useEffect(() => {
+    const refresh = () => {
+      if (state.token) {
+        authMe()
+          .then((me) => setState((s) => ({ ...s, user: me, credits: me.credits })))
+          .catch(() => {});
+      }
+    };
+    const handleVisibility = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel("auth");
+      channel.onmessage = (e) => { if (e.data === "verified") refresh(); };
+    } catch {}
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      channel?.close();
+    };
+  }, [state.token]);
+
   const login = useCallback(async (token: string) => {
     setAuthToken(token);
-    sessionStorage.setItem("auth_token", token);
+    localStorage.setItem("auth_token", token);
     const me = await authMe();
     setState({ token, user: me, credits: me.credits, loading: false });
   }, []);
 
   const logout = useCallback(() => {
     clearAuthToken();
-    sessionStorage.removeItem("auth_token");
+    localStorage.removeItem("auth_token");
     setState({ token: null, user: null, credits: null, loading: false });
   }, []);
 

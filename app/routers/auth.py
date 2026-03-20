@@ -10,7 +10,10 @@ from app.core.security import (
 from app.data.auth_db import (
     create_user, get_user_by_email, get_user_by_id,
     user_exists, get_credit_summary,
+    create_verification_token, consume_verification_token,
+    verify_user, list_all_users,
 )
+from app.core.email import send_verification_email, send_welcome_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 bearer = HTTPBearer(auto_error=False)
@@ -40,6 +43,7 @@ class UserResponse(BaseModel):
     email: str
     role: str
     api_key: str
+    is_verified: bool = False
     credits: dict
 
 
@@ -58,6 +62,9 @@ async def register(body: RegisterRequest):
         api_key=api_key,
     )
     token = create_access_token(user["id"], user["email"], user["role"])
+    # Send verification email (non-blocking)
+    verification_token = create_verification_token(user["id"])
+    send_verification_email(user["email"], verification_token)
     return TokenResponse(access_token=token, role=user["role"], api_key=api_key)
 
 
@@ -85,8 +92,41 @@ async def get_me(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
         email=user["email"],
         role=user["role"],
         api_key=user["api_key"] or "",
+        is_verified=bool(user.get("is_verified")),
         credits=get_credit_summary(user["id"], user["role"]),
     )
+
+
+@router.get("/verify")
+async def verify_email(token: str):
+    """Verify email address via token link."""
+    user_id = consume_verification_token(token)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification link")
+    verify_user(user_id)
+    user = get_user_by_id(user_id)
+    send_welcome_email(user["email"])
+    return {"status": "verified", "message": "Email verified successfully. You can now use all features."}
+
+
+@router.get("/admin/users")
+async def admin_list_users(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
+    """List all users with usage stats — admin only."""
+    user = _get_current_user(credentials)
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return {"users": list_all_users()}
+
+
+@router.post("/resend-verification")
+async def resend_verification(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
+    """Resend verification email."""
+    user = _get_current_user(credentials)
+    if user.get("is_verified"):
+        raise HTTPException(status_code=400, detail="Email already verified")
+    token = create_verification_token(user["id"])
+    send_verification_email(user["email"], token)
+    return {"status": "sent", "message": "Verification email resent"}
 
 
 # ─── Shared dependency ────────────────────────────────────────────────────────

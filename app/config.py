@@ -79,6 +79,11 @@ class Settings(BaseSettings):
     admin_password: str = Field(default="")   # Set in .env — empty disables auto-create
     allowed_origins: str = Field(default="http://localhost:3000")  # comma-separated
 
+    # ── Email ─────────────────────────────────────────────────────────────────
+    resend_api_key: str = Field(default="")
+    email_from: str = Field(default="noreply@quantcortex.in")
+    frontend_url: str = Field(default="https://quantcortex.in")
+
     # ── Rate limiting ─────────────────────────────────────────────────────────
     rate_limit_query: str = "20/minute"
     rate_limit_upload: str = "5/minute"

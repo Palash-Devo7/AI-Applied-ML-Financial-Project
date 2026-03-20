@@ -36,7 +36,20 @@ def get_current_user(
     return user
 
 
-def require_credits(request: Request, user: dict = Depends(get_current_user)) -> dict:
+def require_verified(user: dict = Depends(get_current_user)) -> dict:
+    """Require email verification. Admins bypass this check."""
+    if user["role"] != "admin" and not user.get("is_verified"):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "email_not_verified",
+                "message": "Please verify your email address before using this feature. Check your inbox.",
+            },
+        )
+    return user
+
+
+def require_credits(request: Request, user: dict = Depends(require_verified)) -> dict:
     """
     Check if user has enough credits for this endpoint.
     Attaches cost to request.state so the router can consume after success.

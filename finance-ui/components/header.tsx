@@ -8,6 +8,16 @@ export function Header() {
   const { user, credits, logout } = useAuth();
   const router = useRouter();
 
+  const handleResendVerification = async () => {
+    const token = localStorage.getItem("auth_token");
+    if (!token) return;
+    await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"}/auth/resend-verification`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    alert("Verification email resent. Check your inbox.");
+  };
+
   if (!user) return null;
 
   const handleLogout = () => {
@@ -23,6 +33,13 @@ export function Header() {
     isAdmin ? "text-primary" : remaining <= 2 ? "text-red-400" : remaining <= 5 ? "text-yellow-400" : "text-green-400";
 
   return (
+    <>
+    {!user.is_verified && user.role !== "admin" && (
+      <div className="bg-yellow-500/10 border-b border-yellow-500/20 px-4 py-2 text-center text-xs text-yellow-400">
+        Please verify your email to unlock full access.{" "}
+        <button onClick={handleResendVerification} className="underline hover:text-yellow-300">Resend email</button>
+      </div>
+    )}
     <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-sm">
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4">
         {/* Logo */}
@@ -72,5 +89,6 @@ export function Header() {
         </div>
       </div>
     </header>
+    </>
   );
 }
