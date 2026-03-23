@@ -25,6 +25,8 @@ export function DotCanvas() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    // ctx is non-null from here — cast for nested function scope
+    const safeCtx = ctx;
 
     let W = 0, H = 0;
     let animId: number;
@@ -123,10 +125,10 @@ export function DotCanvas() {
       dots.forEach(d => {
         const pulse = formed ? 0.45 + 0.55 * Math.sin(frame * 0.04 + d.ph * Math.PI * 2) : d.alpha;
         const sz = formed ? d.size * (1 + 0.18 * Math.sin(frame * 0.05 + d.ph * 5)) : d.size;
-        ctx.beginPath();
-        ctx.arc(d.x, d.y, Math.max(0.5, sz), 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${Math.round(d.col[0]*d.shade)},${Math.round(d.col[1]*d.shade)},${Math.round(d.col[2]*d.shade)},${Math.min(1, pulse).toFixed(2)})`;
-        ctx.fill();
+        safeCtx.beginPath();
+        safeCtx.arc(d.x, d.y, Math.max(0.5, sz), 0, Math.PI * 2);
+        safeCtx.fillStyle = `rgba(${Math.round(d.col[0]*d.shade)},${Math.round(d.col[1]*d.shade)},${Math.round(d.col[2]*d.shade)},${Math.min(1, pulse).toFixed(2)})`;
+        safeCtx.fill();
       });
     }
 
@@ -172,7 +174,7 @@ export function DotCanvas() {
     function loop() {
       if (done) return;
       frame++; phaseT++;
-      ctx.clearRect(0, 0, W, H);
+      safeCtx.clearRect(0, 0, W, H);
 
       if (phase === "scatter") {
         dots.forEach(d => {
