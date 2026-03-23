@@ -85,6 +85,7 @@ export function DotCanvas() {
     let textT: { x: number; y: number }[] = [];
 
     function resize() {
+      if (!canvas) return;
       const parent = canvas.parentElement;
       if (!parent) return;
       W = canvas.width = parent.clientWidth;
