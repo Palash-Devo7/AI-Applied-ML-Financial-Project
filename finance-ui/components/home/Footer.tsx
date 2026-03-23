@@ -1,6 +1,6 @@
 export function Footer() {
   return (
-    <footer style={{
+    <footer className="home-footer" style={{
       borderTop: "1px solid var(--home-border)",
       padding: "32px 56px",
       background: "var(--home-bg2)",

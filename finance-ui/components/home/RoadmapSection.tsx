@@ -12,7 +12,7 @@ export function RoadmapSection() {
   ];
 
   return (
-    <section id="roadmap" style={{ padding: "96px 56px", background: "var(--home-bg)", borderTop: "1px solid var(--home-border)" }}>
+    <section id="roadmap" className="home-section" style={{ padding: "96px 56px", background: "var(--home-bg)", borderTop: "1px solid var(--home-border)" }}>
       <div style={{ maxWidth: 960, margin: "0 auto" }}>
         <div style={{ marginBottom: 56 }}>
           <span style={{ fontSize: 11, color: "var(--home-purple)", fontFamily: "var(--font-mono)", letterSpacing: 3, textTransform: "uppercase" }}>
@@ -23,7 +23,7 @@ export function RoadmapSection() {
           </h2>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
+        <div className="home-grid-3" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
           {live.map((item) => (
             <div key={item.title} style={{
               background: "var(--home-bg2)", border: "1px solid rgba(16,185,129,0.2)",

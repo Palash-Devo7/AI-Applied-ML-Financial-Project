@@ -10,7 +10,7 @@ export function Navbar() {
   }
 
   return (
-    <nav style={{
+    <nav className="home-navbar" style={{
       position: "sticky", top: 0, zIndex: 100,
       background: "rgba(7,7,10,0.92)", backdropFilter: "blur(16px)",
       borderBottom: "1px solid var(--home-border)",
@@ -28,7 +28,7 @@ export function Navbar() {
         </span>
       </div>
 
-      <div style={{ display: "flex", gap: 28 }}>
+      <div className="home-navbar-links" style={{ display: "flex", gap: 28 }}>
         {[["Platform", "value"], ["Features", "features"], ["Roadmap", "roadmap"]].map(([label, id]) => (
           <span key={id} onClick={() => scrollTo(id)} style={{
             fontSize: 13, color: "var(--home-muted)", cursor: "pointer", transition: "color .2s",

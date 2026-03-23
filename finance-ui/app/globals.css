@@ -149,3 +149,25 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.6; }
 }
+
+/* ── Homepage responsive ── */
+@media (max-width: 640px) {
+  .home-navbar { padding: 0 20px !important; }
+  .home-navbar-links { display: none !important; }
+  .home-hero { grid-template-columns: 1fr !important; min-height: auto !important; }
+  .home-hero-text { padding: 40px 24px 32px !important; border-right: none !important; border-bottom: 1px solid var(--home-border) !important; }
+  .home-hero-canvas { min-height: 280px !important; height: 280px !important; }
+  .home-section { padding: 64px 20px !important; }
+  .home-grid-3 { grid-template-columns: 1fr !important; }
+  .home-platform-strip { padding: 16px 20px !important; overflow-x: auto !important; }
+  .home-footer { flex-direction: column !important; gap: 20px !important; padding: 28px 20px !important; }
+}
+
+@media (min-width: 641px) and (max-width: 900px) {
+  .home-section { padding: 72px 32px !important; }
+  .home-hero { grid-template-columns: 1fr !important; min-height: auto !important; }
+  .home-hero-text { padding: 56px 32px 40px !important; border-right: none !important; border-bottom: 1px solid var(--home-border) !important; }
+  .home-hero-canvas { min-height: 320px !important; height: 320px !important; }
+  .home-grid-3 { grid-template-columns: repeat(2, 1fr) !important; }
+  .home-footer { padding: 28px 32px !important; }
+}

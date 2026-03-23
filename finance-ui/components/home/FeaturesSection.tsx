@@ -9,7 +9,7 @@ export function FeaturesSection() {
   ];
 
   return (
-    <section id="features" style={{ padding: "96px 56px", background: "var(--home-bg2)", borderTop: "1px solid var(--home-border)" }}>
+    <section id="features" className="home-section" style={{ padding: "96px 56px", background: "var(--home-bg2)", borderTop: "1px solid var(--home-border)" }}>
       <div style={{ maxWidth: 960, margin: "0 auto" }}>
         <div style={{ marginBottom: 56 }}>
           <span style={{ fontSize: 11, color: "var(--home-purple)", fontFamily: "var(--font-mono)", letterSpacing: 3, textTransform: "uppercase" }}>
@@ -20,7 +20,7 @@ export function FeaturesSection() {
           </h2>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 1, border: "1px solid var(--home-border)", borderRadius: 16, overflow: "hidden" }}>
+        <div className="home-grid-3" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 1, border: "1px solid var(--home-border)", borderRadius: 16, overflow: "hidden" }}>
           {features.map((f) => (
             <div key={f.num} style={{
               padding: "36px 28px", background: "var(--home-bg2)",

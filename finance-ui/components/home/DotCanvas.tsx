@@ -38,6 +38,7 @@ export function DotCanvas() {
     const DUR = { scatter:100, formHi:90, holdHi:160, toRupee:110, holdRupee:260, toText:120, holdText:240 };
 
     function sampleCanvas(drawFn: (c: CanvasRenderingContext2D) => void, step: number) {
+      if (W <= 0 || H <= 0) return [];
       const off = document.createElement("canvas");
       off.width = W; off.height = H;
       const c = off.getContext("2d")!;
@@ -167,7 +168,13 @@ export function DotCanvas() {
     }
 
     resize();
-    init();
+
+    // Retry init until dimensions are available (can be 0 on mobile before layout)
+    function tryInit() {
+      if (W <= 0 || H <= 0) { requestAnimationFrame(tryInit); return; }
+      init();
+      animId = requestAnimationFrame(loop);
+    }
 
     const ro = new ResizeObserver(() => resize());
     if (canvas.parentElement) ro.observe(canvas.parentElement);
@@ -210,7 +217,7 @@ export function DotCanvas() {
       animId = requestAnimationFrame(loop);
     }
 
-    animId = requestAnimationFrame(loop);
+    tryInit();
     return () => { cancelAnimationFrame(animId); ro.disconnect(); };
   }, []);
 

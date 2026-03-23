@@ -6,8 +6,8 @@ import { DotCanvas } from "./DotCanvas";
 export function Hero() {
   const router = useRouter();
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", minHeight: 580 }}>
-      <div style={{ padding: "72px 56px", display: "flex", flexDirection: "column", justifyContent: "center", borderRight: "1px solid var(--home-border)" }}>
+    <div className="home-hero" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", minHeight: 580 }}>
+      <div className="home-hero-text" style={{ padding: "72px 56px", display: "flex", flexDirection: "column", justifyContent: "center", borderRight: "1px solid var(--home-border)" }}>
         <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "var(--home-purple)", marginBottom: 24, fontFamily: "var(--font-mono)", display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ width: 20, height: 1, background: "var(--home-purple)", display: "inline-block" }} />
           Indian Equity Research Platform
@@ -37,7 +37,7 @@ export function Hero() {
           >See how it works</button>
         </div>
       </div>
-      <div style={{ position: "relative", overflow: "hidden", background: "var(--home-bg)", minHeight: 580 }}>
+      <div className="home-hero-canvas" style={{ position: "relative", overflow: "hidden", background: "var(--home-bg)", minHeight: 580 }}>
         <DotCanvas />
       </div>
     </div>

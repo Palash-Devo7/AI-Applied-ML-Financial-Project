@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 export function CtaSection() {
   const router = useRouter();
   return (
-    <section style={{
+    <section className="home-section" style={{
       padding: "96px 56px",
       background: "radial-gradient(ellipse 70% 60% at 50% 50%, rgba(167,139,250,0.12) 0%, var(--home-bg) 70%)",
       borderTop: "1px solid var(--home-border)",
