@@ -52,9 +52,14 @@ export function Header() {
           {/* Credits */}
           <div className="flex items-center gap-2 text-sm">
             {isAdmin ? (
-              <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-                Admin
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+                  Admin
+                </span>
+                <Link href="/admin" className="rounded-md border border-primary/30 px-3 py-1.5 text-xs text-primary transition-colors hover:bg-primary/10">
+                  Dashboard
+                </Link>
+              </div>
             ) : (
               <>
                 {/* Credit bar */}

@@ -3,6 +3,7 @@ import { Sora, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
 import { ConditionalHeader } from "@/components/ConditionalHeader";
+import { Analytics } from "@vercel/analytics/next";
 
 const sora = Sora({
   subsets: ["latin"],
@@ -31,6 +32,7 @@ export default function RootLayout({
           <ConditionalHeader />
           {children}
         </Providers>
+        <Analytics />
       </body>
     </html>
   );

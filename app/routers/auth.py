@@ -11,7 +11,7 @@ from app.data.auth_db import (
     create_user, get_user_by_email, get_user_by_id,
     user_exists, get_credit_summary,
     create_verification_token, consume_verification_token,
-    verify_user, list_all_users,
+    verify_user, list_all_users, get_admin_stats,
 )
 from app.core.email import send_verification_email, send_welcome_email
 
@@ -116,6 +116,26 @@ async def admin_list_users(credentials: HTTPAuthorizationCredentials = Depends(b
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     return {"users": list_all_users()}
+
+
+@router.get("/admin/stats")
+async def admin_stats(credentials: HTTPAuthorizationCredentials = Depends(bearer)):
+    """Platform analytics — admin only."""
+    user = _get_current_user(credentials)
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    from app.data.financial_db import _get_conn as fin_conn
+    stats = get_admin_stats()
+    # Loaded companies from financial DB
+    try:
+        conn = fin_conn()
+        rows = conn.execute(
+            "SELECT company, ticker, status, loaded_at FROM company_registry ORDER BY loaded_at DESC LIMIT 20"
+        ).fetchall()
+        stats["loaded_companies"] = [dict(r) for r in rows]
+    except Exception:
+        stats["loaded_companies"] = []
+    return stats
 
 
 @router.post("/resend-verification")

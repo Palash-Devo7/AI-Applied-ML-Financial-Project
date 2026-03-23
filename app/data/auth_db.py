@@ -200,13 +200,59 @@ def list_all_users() -> list[dict]:
     with _get_conn() as conn:
         rows = conn.execute(
             """SELECT u.id, u.email, u.role, u.is_verified, u.is_active, u.created_at,
-                      COALESCE(dc.credits_used, 0) as credits_used_today
+                      COALESCE(dc.credits_used, 0) as credits_used_today,
+                      COALESCE(cl.total_credits, 0) as credits_used_total
                FROM users u
                LEFT JOIN daily_credits dc
                  ON u.id = dc.user_id AND dc.date = date('now')
+               LEFT JOIN (SELECT user_id, SUM(credits) as total_credits FROM credit_log GROUP BY user_id) cl
+                 ON u.id = cl.user_id
                ORDER BY u.created_at DESC"""
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_admin_stats() -> dict:
+    """Return aggregated platform stats — admin only."""
+    with _get_conn() as conn:
+        # Signups per day (last 30 days)
+        signups = conn.execute(
+            """SELECT date(created_at) as day, COUNT(*) as count
+               FROM users WHERE created_at >= date('now', '-30 days')
+               GROUP BY day ORDER BY day"""
+        ).fetchall()
+
+        # Daily active users (last 30 days)
+        dau = conn.execute(
+            """SELECT date, COUNT(DISTINCT user_id) as count
+               FROM daily_credits WHERE date >= date('now', '-30 days')
+               GROUP BY date ORDER BY date"""
+        ).fetchall()
+
+        # Endpoint usage totals
+        endpoint_usage = conn.execute(
+            """SELECT endpoint, COUNT(*) as count, SUM(credits) as credits
+               FROM credit_log GROUP BY endpoint ORDER BY count DESC"""
+        ).fetchall()
+
+        # Total platform stats
+        totals = conn.execute(
+            """SELECT
+               (SELECT COUNT(*) FROM users) as total_users,
+               (SELECT COUNT(*) FROM users WHERE is_verified=1) as verified_users,
+               (SELECT COUNT(DISTINCT user_id) FROM daily_credits WHERE date=date('now')) as active_today,
+               (SELECT COUNT(*) FROM credit_log) as total_actions,
+               (SELECT COUNT(*) FROM credit_log WHERE endpoint='/forecast/event') as total_forecasts,
+               (SELECT COUNT(*) FROM credit_log WHERE endpoint IN ('/query','/query/stream')) as total_queries,
+               (SELECT COUNT(*) FROM credit_log WHERE endpoint='/companies/load') as total_loads"""
+        ).fetchone()
+
+    return {
+        "totals": dict(totals),
+        "signups_by_day": [dict(r) for r in signups],
+        "dau_by_day": [dict(r) for r in dau],
+        "endpoint_usage": [dict(r) for r in endpoint_usage],
+    }
 
 
 # ─── Credits ──────────────────────────────────────────────────────────────────

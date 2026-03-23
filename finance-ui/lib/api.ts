@@ -299,3 +299,40 @@ export function submitFeedback(payload: FeedbackPayload): Promise<{ status: stri
     body: JSON.stringify(payload),
   });
 }
+
+// ─── Admin API ────────────────────────────────────────────────────────────────
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  role: string;
+  is_verified: number;
+  is_active: number;
+  created_at: string;
+  credits_used_today: number;
+}
+
+export async function adminListUsers(): Promise<AdminUser[]> {
+  const data = await request<{ users: AdminUser[] }>("/auth/admin/users");
+  return data.users;
+}
+
+export interface AdminStats {
+  totals: {
+    total_users: number;
+    verified_users: number;
+    active_today: number;
+    total_actions: number;
+    total_forecasts: number;
+    total_queries: number;
+    total_loads: number;
+  };
+  signups_by_day: { day: string; count: number }[];
+  dau_by_day: { date: string; count: number }[];
+  endpoint_usage: { endpoint: string; count: number; credits: number }[];
+  loaded_companies: { company: string; ticker: string; status: string; loaded_at: string }[];
+}
+
+export async function adminGetStats(): Promise<AdminStats> {
+  return request<AdminStats>("/auth/admin/stats");
+}
