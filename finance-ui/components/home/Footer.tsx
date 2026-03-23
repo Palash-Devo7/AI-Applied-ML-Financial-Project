@@ -24,8 +24,8 @@ export function Footer() {
               Quant<em style={{ color: "var(--home-purple)", fontStyle: "normal" }}>Cortex</em>
             </span>
           </div>
-          <p style={{ fontSize: 13, color: "var(--home-muted)", fontWeight: 300, lineHeight: 1.6, maxWidth: 280 }}>
-            AI research platform for BSE-listed Indian companies. Auto-fetch filings, ask questions, run multi-agent forecasts.
+          <p style={{ fontSize: 13, color: "var(--home-muted)", fontWeight: 300, lineHeight: 1.6 }}>
+            AI research platform
           </p>
         </div>
 
