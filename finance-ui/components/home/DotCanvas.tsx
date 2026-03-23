@@ -146,6 +146,7 @@ export function DotCanvas() {
     }
 
     function fadeToOverlay() {
+      if (!canvas) return;
       let op = 1;
       const iv = setInterval(() => {
         op = Math.max(0, op - 0.018);
