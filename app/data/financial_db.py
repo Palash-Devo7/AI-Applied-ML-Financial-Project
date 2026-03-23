@@ -88,14 +88,24 @@ def init_db() -> None:
             prices_synced_at TEXT,
             doc_count        INTEGER DEFAULT 0,
             error_msg        TEXT,
+            progress_msg     TEXT,
+            financials_synced_at TEXT,
             created_at       TEXT DEFAULT CURRENT_TIMESTAMP
         );
-
         CREATE INDEX IF NOT EXISTS idx_fin_company    ON company_financials(company);
         CREATE INDEX IF NOT EXISTS idx_price_ticker   ON stock_prices(ticker, date);
         CREATE INDEX IF NOT EXISTS idx_event_company  ON events(company, event_date);
         CREATE INDEX IF NOT EXISTS idx_registry_ticker ON company_registry(ticker);
     """)
+    # migrate existing installs — ignore if column already exists
+    for col_sql in [
+        "ALTER TABLE company_registry ADD COLUMN progress_msg TEXT",
+        "ALTER TABLE company_registry ADD COLUMN financials_synced_at TEXT",
+    ]:
+        try:
+            conn.execute(col_sql)
+        except Exception:
+            pass
     conn.commit()
 
 
@@ -317,6 +327,12 @@ def update_company_status(company: str, status: str, error_msg: str = "") -> Non
     conn.commit()
 
 
+def set_progress(company: str, msg: str) -> None:
+    conn = _get_conn()
+    conn.execute("UPDATE company_registry SET progress_msg=? WHERE company=?", (msg, company))
+    conn.commit()
+
+
 def update_docs_synced(company: str, doc_count: int) -> None:
     from datetime import datetime, timezone
     conn = _get_conn()
@@ -332,6 +348,16 @@ def update_prices_synced(company: str) -> None:
     conn = _get_conn()
     conn.execute(
         "UPDATE company_registry SET prices_synced_at=? WHERE company=?",
+        (datetime.now(timezone.utc).isoformat(), company),
+    )
+    conn.commit()
+
+
+def update_financials_synced(company: str) -> None:
+    from datetime import datetime, timezone
+    conn = _get_conn()
+    conn.execute(
+        "UPDATE company_registry SET financials_synced_at=? WHERE company=?",
         (datetime.now(timezone.utc).isoformat(), company),
     )
     conn.commit()

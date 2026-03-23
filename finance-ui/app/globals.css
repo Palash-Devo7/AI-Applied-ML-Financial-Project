@@ -48,39 +48,53 @@
 }
 
 :root {
-  /* Finance RAG — Stripe-inspired dark (always dark) */
-  --background: #06060A;
-  --foreground: #F1F1F3;
-  --card: #0F0F17;
-  --card-foreground: #F1F1F3;
-  --popover: #0F0F17;
-  --popover-foreground: #F1F1F3;
-  --primary: #4F46E5;
-  --primary-foreground: #F1F1F3;
-  --secondary: #1A1A2E;
-  --secondary-foreground: #F1F1F3;
-  --muted: #1A1A2E;
-  --muted-foreground: #6B7280;
-  --accent: #4F46E5;
-  --accent-foreground: #F1F1F3;
+  /* Homepage design tokens */
+  --home-bg: #07070a;
+  --home-bg2: #0f0f14;
+  --home-bg3: #16161d;
+  --home-border: rgba(255,255,255,0.06);
+  --home-border2: rgba(255,255,255,0.1);
+  --home-text: #f0f0f5;
+  --home-muted: #6b6b7a;
+  --home-muted2: #45454f;
+  --home-purple: #a78bfa;
+  --home-purple-dim: rgba(167,139,250,0.08);
+  --home-purple-border: rgba(167,139,250,0.2);
+  --home-green: #10b981;
+
+  /* QuantCortex — dark theme aligned with landing page */
+  --background: #07070a;
+  --foreground: #f0f0f5;
+  --card: #0f0f14;
+  --card-foreground: #f0f0f5;
+  --popover: #0f0f14;
+  --popover-foreground: #f0f0f5;
+  --primary: #a78bfa;
+  --primary-foreground: #1a0a3a;
+  --secondary: #16161d;
+  --secondary-foreground: #f0f0f5;
+  --muted: #16161d;
+  --muted-foreground: #6b6b7a;
+  --accent: #a78bfa;
+  --accent-foreground: #1a0a3a;
   --destructive: #EF4444;
-  --border: #1A1A2E;
-  --input: #1A1A2E;
-  --ring: #4F46E5;
-  --chart-1: #4F46E5;
+  --border: rgba(255,255,255,0.08);
+  --input: #16161d;
+  --ring: rgba(167,139,250,0.4);
+  --chart-1: #a78bfa;
   --chart-2: #7C3AED;
   --chart-3: #2563EB;
   --chart-4: #0EA5E9;
   --chart-5: #10B981;
   --radius: 0.5rem;
-  --sidebar: #0F0F17;
-  --sidebar-foreground: #F1F1F3;
-  --sidebar-primary: #4F46E5;
-  --sidebar-primary-foreground: #F1F1F3;
-  --sidebar-accent: #1A1A2E;
-  --sidebar-accent-foreground: #F1F1F3;
-  --sidebar-border: #1A1A2E;
-  --sidebar-ring: #4F46E5;
+  --sidebar: #0f0f14;
+  --sidebar-foreground: #f0f0f5;
+  --sidebar-primary: #a78bfa;
+  --sidebar-primary-foreground: #1a0a3a;
+  --sidebar-accent: #16161d;
+  --sidebar-accent-foreground: #f0f0f5;
+  --sidebar-border: rgba(255,255,255,0.08);
+  --sidebar-ring: rgba(167,139,250,0.4);
 }
 
 /* Force dark — no light mode */
@@ -91,31 +105,31 @@
   --card-foreground: #F1F1F3;
   --popover: #0F0F17;
   --popover-foreground: #F1F1F3;
-  --primary: #4F46E5;
-  --primary-foreground: #F1F1F3;
-  --secondary: #1A1A2E;
-  --secondary-foreground: #F1F1F3;
-  --muted: #1A1A2E;
-  --muted-foreground: #6B7280;
-  --accent: #4F46E5;
-  --accent-foreground: #F1F1F3;
+  --primary: #a78bfa;
+  --primary-foreground: #1a0a3a;
+  --secondary: #16161d;
+  --secondary-foreground: #f0f0f5;
+  --muted: #16161d;
+  --muted-foreground: #6b6b7a;
+  --accent: #a78bfa;
+  --accent-foreground: #1a0a3a;
   --destructive: #EF4444;
-  --border: #1A1A2E;
-  --input: #1A1A2E;
-  --ring: #4F46E5;
-  --chart-1: #4F46E5;
+  --border: rgba(255,255,255,0.08);
+  --input: #16161d;
+  --ring: rgba(167,139,250,0.4);
+  --chart-1: #a78bfa;
   --chart-2: #7C3AED;
   --chart-3: #2563EB;
   --chart-4: #0EA5E9;
   --chart-5: #10B981;
-  --sidebar: #0F0F17;
-  --sidebar-foreground: #F1F1F3;
-  --sidebar-primary: #4F46E5;
-  --sidebar-primary-foreground: #F1F1F3;
-  --sidebar-accent: #1A1A2E;
-  --sidebar-accent-foreground: #F1F1F3;
-  --sidebar-border: #1A1A2E;
-  --sidebar-ring: #4F46E5;
+  --sidebar: #0f0f14;
+  --sidebar-foreground: #f0f0f5;
+  --sidebar-primary: #a78bfa;
+  --sidebar-primary-foreground: #1a0a3a;
+  --sidebar-accent: #16161d;
+  --sidebar-accent-foreground: #f0f0f5;
+  --sidebar-border: rgba(255,255,255,0.08);
+  --sidebar-ring: rgba(167,139,250,0.4);
 }
 
 @layer base {
@@ -127,5 +141,11 @@
   }
   html {
     @apply font-sans;
+    scroll-behavior: smooth;
   }
+}
+
+@keyframes softpulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }

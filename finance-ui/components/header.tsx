@@ -44,7 +44,7 @@ export function Header() {
       <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4">
         {/* Logo */}
         <Link href="/" className="text-lg font-bold tracking-tight">
-          Finance<span className="text-primary">RAG</span>
+          Quant<span className="text-primary">Cortex</span>
         </Link>
 
         {/* Right side */}

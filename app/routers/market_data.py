@@ -1,4 +1,6 @@
 """Market data router — financial history, stock prices, and events."""
+import asyncio
+from datetime import date
 from typing import Optional
 
 import structlog
@@ -121,7 +123,29 @@ async def get_stock_history(ticker: str, days: int = 365):
 
 @router.get("/stock/{ticker}/summary")
 async def get_stock_info(ticker: str):
-    """Get 52-week summary for a ticker."""
+    """Get 52-week summary for a ticker. Fetches live BSE price on every call."""
+    from app.data.financial_db import get_registry_by_ticker, upsert_stock_prices
+    from app.services.providers.bse_provider import BSEProvider
+
+    try:
+        registry = get_registry_by_ticker(ticker.upper())
+        if registry and registry.get("scrip_code"):
+            bse = BSEProvider()
+            price = await asyncio.to_thread(bse.get_price, registry["scrip_code"])
+            if price.get("LTP"):
+                upsert_stock_prices([{
+                    "company": registry["company"],
+                    "ticker": ticker.upper(),
+                    "date": str(date.today()),
+                    "open": price.get("Open"),
+                    "high": price.get("High"),
+                    "low": price.get("Low"),
+                    "close": price.get("LTP"),
+                    "volume": None,
+                }])
+    except Exception:
+        pass  # fall back to cached data if BSE is unavailable
+
     summary = get_stock_summary(ticker)
     if not summary:
         raise HTTPException(status_code=404, detail=f"No data for {ticker}.")

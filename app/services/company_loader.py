@@ -20,7 +20,7 @@ from app.services.providers.yfinance_provider import YFinanceProvider
 
 logger = structlog.get_logger(__name__)
 
-MAX_PDFS = 6
+MAX_PDFS = 3
 
 
 class CompanyLoader:
@@ -70,25 +70,36 @@ class CompanyLoader:
         update_company_status(company, "loading")
         upsert_ticker(company, ticker)
         if yf_ticker:
-            upsert_ticker(company, yf_ticker)  # also register yfinance ticker for stock summary
+            upsert_ticker(company, yf_ticker)
+
+        from app.data.financial_db import set_progress, update_financials_synced
 
         try:
             # 4. BSE recent financials
+            set_progress(company, "Fetching financials from BSE…")
             await self._fetch_bse_financials(company, ticker, scrip_code)
+            update_financials_synced(company)  # signal: BSE financials ready
 
             # 5. BSE live price
+            set_progress(company, "Fetching live price from BSE…")
             await self._fetch_bse_price(company, ticker, scrip_code)
             update_prices_synced(company)
 
             # 6. yfinance historical financials + prices (if ticker resolved)
             if yf_ticker:
+                set_progress(company, "Fetching 5-year price history…")
                 await self._fetch_yfinance_data(company, yf_ticker)
+                update_financials_synced(company)  # signal: full history ready
 
             # 7. PDFs → ChromaDB
-            doc_count = await self._fetch_and_ingest_pdfs(company, ticker, scrip_code)
+            set_progress(company, "Downloading filings from BSE…")
+            doc_count = await self._fetch_and_ingest_pdfs(
+                company, ticker, scrip_code, update_company_status, update_docs_synced, set_progress
+            )
 
             update_docs_synced(company, doc_count)
             update_company_status(company, "ready")
+            set_progress(company, "")  # clear progress — signals frontend that indexing is fully done
             logger.info("company_load_complete", company=company, docs=doc_count, yf_ticker=yf_ticker)
             return {"status": "ready", "company": company, "doc_count": doc_count}
 
@@ -196,21 +207,30 @@ class CompanyLoader:
         except Exception as exc:
             logger.warning("yfinance_prices_failed", company=company, error=str(exc))
 
-    async def _fetch_and_ingest_pdfs(self, company: str, ticker: str, scrip_code: str) -> int:
+    async def _fetch_and_ingest_pdfs(
+        self, company: str, ticker: str, scrip_code: str,
+        update_status=None, update_docs=None, set_progress=None,
+    ) -> int:
         announcements = await asyncio.to_thread(
             self._bse.get_announcements, scrip_code, 365
         )
         to_ingest = announcements[:MAX_PDFS]
-        ingested  = 0
+        total = len(to_ingest)
+        ingested = 0
 
-        for ann in to_ingest:
+        for i, ann in enumerate(to_ingest, 1):
             attachment = ann.get("ATTACHMENTNAME", "")
             category   = ann.get("CATEGORYNAME", "Document")
             news_dt    = ann.get("NEWS_DT", "")
             year       = int(news_dt[:4]) if news_dt else 2024
 
             try:
+                if set_progress:
+                    set_progress(company, f"Downloading filing {i} of {total} ({year} {category})…")
                 pdf_bytes = await asyncio.to_thread(self._bse.download_pdf, attachment)
+
+                if set_progress:
+                    set_progress(company, f"Indexing filing {i} of {total} — embedding with AI model…")
                 await self._ingestion.ingest(
                     content=pdf_bytes,
                     filename=attachment,
@@ -222,8 +242,14 @@ class CompanyLoader:
                     },
                 )
                 ingested += 1
-                logger.info("pdf_ingested", company=company, attachment=attachment)
-                await asyncio.sleep(1)
+                logger.info("pdf_ingested", company=company, attachment=attachment, total=ingested)
+
+                # Mark ready after first PDF so user can start chatting immediately
+                if ingested == 1 and update_status and update_docs:
+                    update_status(company, "ready")
+                    update_docs(company, 1)
+                    logger.info("company_early_ready", company=company)
+
             except Exception as exc:
                 logger.warning("pdf_ingest_failed", attachment=attachment, error=str(exc))
 

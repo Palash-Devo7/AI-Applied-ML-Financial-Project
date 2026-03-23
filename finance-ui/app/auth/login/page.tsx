@@ -52,7 +52,7 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="mb-8 text-center">
           <h1 className="text-3xl font-bold tracking-tight">
-            Finance<span className="text-primary">RAG</span>
+            Quant<span className="text-primary">Cortex</span>
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
             AI-powered Indian equity research

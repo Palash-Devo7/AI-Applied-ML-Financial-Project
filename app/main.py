@@ -140,7 +140,7 @@ def create_app() -> FastAPI:
         return response
 
     # ── Routers ───────────────────────────────────────────────────────────────
-    from app.routers import auth, collections, companies, forecast, health, ingestion, market_data, query
+    from app.routers import auth, collections, companies, feedback, forecast, health, ingestion, market_data, query
 
     app.include_router(auth.router)
     app.include_router(health.router)
@@ -150,6 +150,7 @@ def create_app() -> FastAPI:
     app.include_router(market_data.router)
     app.include_router(forecast.router)
     app.include_router(companies.router)
+    app.include_router(feedback.router)
 
     # ── Exception handlers ────────────────────────────────────────────────────
     @app.exception_handler(Exception)

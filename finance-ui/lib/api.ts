@@ -29,7 +29,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       window.location.href = "/auth/login";
     }
     const body = await res.json().catch(() => ({}));
-    throw new Error(body?.detail ?? `${res.status} ${res.statusText}`);
+    const detail = body?.detail;
+    const message = typeof detail === "string"
+      ? detail
+      : detail?.message ?? `${res.status} ${res.statusText}`;
+    throw new Error(message);
   }
   return res.json();
 }
@@ -101,6 +105,8 @@ export interface CompanyStatus {
   loaded_at?: string | null;
   doc_count?: number;
   prices_synced_at?: string | null;
+  financials_synced_at?: string | null;
+  progress_msg?: string | null;
 }
 
 export interface AnnualFinancial {
@@ -237,7 +243,14 @@ export function streamQuery(
     signal: ctrl.signal,
   })
     .then(async (res) => {
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const detail = body?.detail;
+        const message = typeof detail === "string"
+          ? detail
+          : detail?.message ?? `${res.status} ${res.statusText}`;
+        throw new Error(message);
+      }
       const reader = res.body?.getReader();
       if (!reader) throw new Error("No response body");
       const decoder = new TextDecoder();
@@ -261,4 +274,28 @@ export function streamQuery(
       if (err.name !== "AbortError") onError(err);
     });
   return ctrl;
+}
+
+// ─── Feedback API ─────────────────────────────────────────────────────────────
+
+export interface FeedbackPayload {
+  feature: "forecast" | "chat" | "both";
+  succeeded: "yes" | "partially" | "no";
+  accuracy?: number;
+  speed?: number;
+  ease?: number;
+  issues?: string[];
+  comment?: string;
+  company?: string;
+  query?: string;
+  response_time_ms?: number;
+  had_error?: boolean;
+}
+
+export function submitFeedback(payload: FeedbackPayload): Promise<{ status: string }> {
+  return request("/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }

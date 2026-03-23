@@ -30,6 +30,7 @@ import {
 import { ArrowLeft, TrendingUp, TrendingDown, Minus, Send, Loader2, FileText } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
+import FeedbackModal from "@/components/feedback-modal";
 
 // ─── Hero bar ────────────────────────────────────────────────────────────────
 
@@ -122,7 +123,7 @@ function OverviewTab({ financials }: { financials: AnnualFinancial[] | null }) {
           <AreaChart data={chartData}>
             <defs>
               <linearGradient id="gRevenue" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#4F46E5" stopOpacity={0.3} />
+                <stop offset="5%" stopColor="#a78bfa" stopOpacity={0.3} />
                 <stop offset="95%" stopColor="#4F46E5" stopOpacity={0} />
               </linearGradient>
               <linearGradient id="gProfit" x1="0" y1="0" x2="0" y2="1">
@@ -134,16 +135,16 @@ function OverviewTab({ financials }: { financials: AnnualFinancial[] | null }) {
             <YAxis stroke="#6B7280" tick={{ fontSize: 12 }} />
             <Tooltip
               contentStyle={{
-                background: "#0F0F17",
-                border: "1px solid #1A1A2E",
+                background: "#0f0f14",
+                border: "1px solid rgba(255,255,255,0.08)",
                 borderRadius: 8,
-                color: "#F1F1F3",
+                color: "#f0f0f5",
               }}
             />
             <Area
               type="monotone"
               dataKey="Revenue"
-              stroke="#4F46E5"
+              stroke="#a78bfa"
               fill="url(#gRevenue)"
               strokeWidth={2}
             />
@@ -218,7 +219,7 @@ const STANCE_ICON: Record<string, typeof TrendingUp> = {
   NEUTRAL: Minus,
 };
 
-function ForecastTab({ companyName }: { companyName: string }) {
+function ForecastTab({ companyName, onFeedbackTrigger }: { companyName: string; onFeedbackTrigger: (q: string) => void }) {
   const { refreshCredits } = useAuth();
   const [eventType, setEventType] = useState("earnings_beat");
   const [description, setDescription] = useState("");
@@ -226,22 +227,26 @@ function ForecastTab({ companyName }: { companyName: string }) {
   const [result, setResult] = useState<ForecastResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const forecastCountRef = useRef(0);
 
   async function run() {
     if (!description.trim() || description.trim().length < 10) return;
     setLoading(true);
     setError(null);
     setResult(null);
+    const desc = description.trim();
     try {
       const payload: ForecastRequest = {
         company: companyName,
         event_type: eventType,
-        event_description: description.trim(),
+        event_description: desc,
         horizon_days: horizon,
       };
       const r = await forecastEvent(payload);
       setResult(r);
       refreshCredits().catch(() => {});
+      forecastCountRef.current += 1;
+      if (forecastCountRef.current === 1) onFeedbackTrigger(desc);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Forecast failed");
     } finally {
@@ -419,13 +424,14 @@ function ForecastTab({ companyName }: { companyName: string }) {
 
 // ─── Chat tab ─────────────────────────────────────────────────────────────────
 
-function ChatTab({ companyName }: { companyName: string }) {
+function ChatTab({ companyName, onFeedbackTrigger }: { companyName: string; onFeedbackTrigger: (q: string) => void }) {
   const { refreshCredits } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const ctrlRef = useRef<AbortController | null>(null);
+  const chatCountRef = useRef(0);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -452,13 +458,18 @@ function ChatTab({ companyName }: { companyName: string }) {
           return updated;
         });
       },
-      () => { setStreaming(false); refreshCredits().catch(() => {}); },
       () => {
+        setStreaming(false);
+        refreshCredits().catch(() => {});
+        chatCountRef.current += 1;
+        if (chatCountRef.current === 2) onFeedbackTrigger(q);
+      },
+      (err) => {
         setMessages((prev) => {
           const updated = [...prev];
           updated[updated.length - 1] = {
             role: "assistant",
-            content: buf || "Sorry, something went wrong.",
+            content: err?.message || "Sorry, something went wrong.",
           };
           return updated;
         });
@@ -553,18 +564,33 @@ export default function CompanyView({ ticker }: { ticker: string }) {
   const [status, setStatus] = useState<CompanyStatus | null>(null);
   const [financials, setFinancials] = useState<AnnualFinancial[] | null>(null);
   const [stock, setStock] = useState<StockSummary | null>(null);
+  const [feedback, setFeedback] = useState<{ trigger: "forecast" | "chat"; query: string } | null>(null);
+
+  function handleFeedbackTrigger(trigger: "forecast" | "chat") {
+    return (query: string) => {
+      const last = localStorage.getItem("feedback_last_shown");
+      if (last && Date.now() - parseInt(last) < 7 * 24 * 60 * 60 * 1000) return;
+      localStorage.setItem("feedback_last_shown", Date.now().toString());
+      setTimeout(() => setFeedback({ trigger, query }), 30_000);
+    };
+  }
 
   // Poll status + re-fetch financials/stock whenever data arrives
   useEffect(() => {
     let stopped = false;
-    let hasPrices = false;
-    let hasFinancials = false;
+    let lastFinancialsSynced: string | null = null;
+    let lastPricesSynced: string | null = null;
+    let lastDocCount = 0;
 
-    async function fetchMarketData() {
-      getStockSummary(ticker).then(setStock).catch(() => null);
+    async function fetchFinancials() {
       getFinancials(ticker)
         .then((d) => { if (d.annual_financials.length > 0) setFinancials(d.annual_financials); })
         .catch(() => null);
+    }
+
+    async function fetchMarketData() {
+      getStockSummary(ticker).then(setStock).catch(() => null);
+      fetchFinancials();
     }
 
     // Initial fetch
@@ -576,21 +602,22 @@ export default function CompanyView({ ticker }: { ticker: string }) {
           const s = await getCompanyStatus(ticker);
           setStatus(s);
 
-          // Re-fetch market data when prices or financials become available for the first time
-          const newPrices = !!s.prices_synced_at;
-          const newFinancials = (s.doc_count ?? 0) > 0;
-          if ((newPrices && !hasPrices) || (newFinancials && !hasFinancials)) {
-            fetchMarketData();
-            hasPrices = newPrices;
-            hasFinancials = newFinancials;
+          // Always re-fetch financials and stock on every tick until we have data
+          // (covers cases where financials_synced_at signal is missing for older companies)
+          fetchFinancials();
+
+          // Re-fetch stock price when prices arrive for the first time
+          if (s.prices_synced_at && s.prices_synced_at !== lastPricesSynced) {
+            getStockSummary(ticker).then(setStock).catch(() => null);
+            lastPricesSynced = s.prices_synced_at;
           }
 
-          if (s.status === "ready") {
-            fetchMarketData(); // final refresh on ready
+          if (s.status === "ready" && !s.progress_msg) {
+            fetchMarketData(); // final refresh once fully done
             break;
           }
         } catch { /* ignore */ }
-        await new Promise((r) => setTimeout(r, 5000));
+        await new Promise((r) => setTimeout(r, 2000));
       }
     }
     poll();
@@ -612,21 +639,29 @@ export default function CompanyView({ ticker }: { ticker: string }) {
 
         <HeroBar ticker={ticker} status={status} stock={stock} />
 
-        {/* Ingestion progress banner */}
-        {status && status.status !== "ready" && (
-          <div className="mt-4 flex items-center gap-3 px-4 py-3 rounded-xl border border-primary/20 bg-primary/5 text-sm">
-            <Loader2 className="h-4 w-4 text-primary animate-spin shrink-0" />
-            <div className="flex-1">
-              <span className="text-foreground font-medium">Loading company data in background</span>
-              <span className="text-muted-foreground ml-2">
-                — financials ready, ingesting filings
-                {status.doc_count ? ` (${status.doc_count} docs so far)` : ""}
+        {/* Ingestion progress banner — shown while loading OR while background indexing continues */}
+        {status && (status.status !== "ready" || !!status.progress_msg) && (
+          <div className={`mt-4 px-4 py-3 rounded-xl border text-sm ${
+            status.status !== "ready"
+              ? "border-primary/20 bg-primary/5"
+              : "border-border bg-card"
+          }`}>
+            <div className="flex items-center gap-3 mb-2">
+              <Loader2 className="h-4 w-4 text-primary animate-spin shrink-0" />
+              <span className="text-foreground font-medium">
+                {status.status !== "ready" ? `Setting up ${status.company ?? ticker}` : "Indexing additional filings in background"}
               </span>
+              {status.status !== "ready" && (
+                <span className="ml-auto text-muted-foreground text-xs flex items-center gap-1">
+                  <FileText className="h-3.5 w-3.5" />
+                  Chat unlocks after first filing is indexed
+                </span>
+              )}
             </div>
-            <span className="text-muted-foreground flex items-center gap-1 text-xs">
-              <FileText className="h-3.5 w-3.5" />
-              Chat available once docs are indexed
-            </span>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono pl-7">
+              <span className="text-primary animate-pulse">›</span>
+              <span>{status.progress_msg || "Initialising…"}</span>
+            </div>
           </div>
         )}
 
@@ -649,14 +684,23 @@ export default function CompanyView({ ticker }: { ticker: string }) {
           </TabsContent>
 
           <TabsContent value="forecast" className="mt-6">
-            <ForecastTab companyName={companyName} />
+            <ForecastTab companyName={companyName} onFeedbackTrigger={handleFeedbackTrigger("forecast")} />
           </TabsContent>
 
           <TabsContent value="chat" className="mt-6">
-            <ChatTab companyName={companyName} />
+            <ChatTab companyName={companyName} onFeedbackTrigger={handleFeedbackTrigger("chat")} />
           </TabsContent>
         </Tabs>
       </div>
+
+      {feedback && (
+        <FeedbackModal
+          trigger={feedback.trigger}
+          company={status?.company ?? ticker}
+          lastQuery={feedback.query}
+          onClose={() => setFeedback(null)}
+        />
+      )}
     </div>
   );
 }

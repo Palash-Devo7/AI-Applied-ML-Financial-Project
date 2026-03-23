@@ -70,6 +70,23 @@ def init_auth_db() -> None:
                 used_at     TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (user_id) REFERENCES users(id)
             );
+
+            CREATE TABLE IF NOT EXISTS feedback (
+                id               TEXT PRIMARY KEY,
+                user_id          TEXT,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                feature          TEXT NOT NULL,
+                succeeded        TEXT NOT NULL,
+                accuracy         INTEGER,
+                speed            INTEGER,
+                ease             INTEGER,
+                issues           TEXT,
+                comment          TEXT,
+                company          TEXT,
+                query            TEXT,
+                response_time_ms INTEGER,
+                had_error        INTEGER NOT NULL DEFAULT 0
+            );
         """)
 
     # Migration: add is_verified to existing installs (no-op if already exists)
@@ -240,3 +257,31 @@ def get_credit_summary(user_id: str, role: str) -> dict:
     used = get_credits_used_today(user_id)
     remaining = max(0, DAILY_LIMIT_TRIAL - used)
     return {"used": used, "limit": DAILY_LIMIT_TRIAL, "remaining": remaining, "role": "trial"}
+
+
+# ─── Feedback ─────────────────────────────────────────────────────────────────
+
+def save_feedback(
+    user_id: Optional[str],
+    feature: str,
+    succeeded: str,
+    accuracy: Optional[int],
+    speed: Optional[int],
+    ease: Optional[int],
+    issues: Optional[str],
+    comment: Optional[str],
+    company: Optional[str],
+    query: Optional[str],
+    response_time_ms: Optional[int],
+    had_error: int,
+) -> None:
+    fid = str(ULID())
+    with _lock, _get_conn() as conn:
+        conn.execute(
+            """INSERT INTO feedback
+               (id, user_id, feature, succeeded, accuracy, speed, ease,
+                issues, comment, company, query, response_time_ms, had_error)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (fid, user_id, feature, succeeded, accuracy, speed, ease,
+             issues, comment, company, query, response_time_ms, had_error),
+        )
