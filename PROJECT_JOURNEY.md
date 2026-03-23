@@ -1539,5 +1539,121 @@ is_verified: true → banner gone, full access unlocked
 
 ---
 
+## 22. Homepage Redesign, Load UX & Product Polish
+
+### What changed
+
+This session focused on product quality — the app was functionally complete but visually rough and UX-wise clunky. Three areas addressed:
+
+1. **Full homepage redesign**
+2. **Company load UX overhaul**
+3. **Live pricing + feedback collection**
+
+---
+
+### Homepage redesign
+
+Replaced the plain placeholder homepage with a full landing page built entirely in Next.js components:
+
+| Component | Purpose |
+|---|---|
+| `Navbar` | Fixed top nav with logo, CTA button |
+| `Hero` | Headline, subtext, search CTA |
+| `DotCanvas` | Animated dot grid background (canvas, requestAnimationFrame) |
+| `PlatformStrip` | Tech stack logos strip |
+| `ValueSection` | Three-column feature pillars |
+| `FeaturesSection` | Detailed feature breakdown |
+| `RoadmapSection` | Roadmap with completed/planned phases |
+| `CtaSection` | Bottom signup call-to-action |
+| `Footer` | Links + copyright |
+
+Theme unified across the entire app: `--primary` changed from indigo `#4F46E5` → purple `#a78bfa`. The `ConditionalHeader` component was introduced so the sticky app header is hidden on the homepage (which has its own `Navbar`) but visible on all inner pages.
+
+---
+
+### Company load UX
+
+**Problem:** After clicking a company, users saw a blank screen for 30–60 seconds with no feedback on what was happening. Then suddenly the page showed data.
+
+**Solution:** Progressive loading with real-time step messages.
+
+Backend — `company_loader.py` now calls `set_progress(company, msg)` at every meaningful step:
+
+```
+"Fetching financials from BSE…"
+"Fetching live price from BSE…"
+"Fetching 5-year price history…"
+"Downloading filing 1 of 3 (2025 Annual Report)…"
+"Indexing filing 1 of 3 — embedding with AI model…"
+"Downloading filing 2 of 3…"
+...
+```
+
+These write to a new `progress_msg` column in `company_registry` (added via `ALTER TABLE` migration on startup — existing installs auto-migrate).
+
+**Early-ready signal:** After the first PDF is fully indexed, the company status is set to `ready` immediately. Users can start chatting while PDFs 2–3 continue indexing in the background. A separate banner shows during this phase.
+
+Frontend — `company-view.tsx` polls `/companies/status/{ticker}` every 2 seconds and displays the `progress_msg` in a terminal-style banner:
+
+```
+› Indexing filing 2 of 3 — embedding with AI model…
+```
+
+Banner transitions: loading state → "Indexing additional filings in background" → green "X documents indexed" once fully done. Poll stops when `status === "ready"` AND `progress_msg === ""`.
+
+A `financials_synced_at` column was also added — the frontend re-fetches financial data whenever this timestamp changes, so charts populate as soon as BSE financials are ready rather than waiting for the full load.
+
+---
+
+### Live stock pricing
+
+**Problem:** Stock price was fetched once at load time and cached in SQLite. Users revisiting a company days later would see stale prices.
+
+**Solution:** The `/market/stock/{ticker}/summary` endpoint now fetches a live price from BSE on every call before reading from the DB:
+
+```python
+registry = get_registry_by_ticker(ticker.upper())
+if registry and registry.get("scrip_code"):
+    bse = BSEProvider()
+    price = await asyncio.to_thread(bse.get_price, registry["scrip_code"])
+    if price.get("LTP"):
+        upsert_stock_prices([{ "close": price["LTP"], "date": str(date.today()), ... }])
+```
+
+Falls back to cached data silently if BSE is unavailable. The 52W high/low still comes from historical SQLite data (correct — calculated over stored history). Only `latest_close` is refreshed live.
+
+---
+
+### Feedback collection
+
+A `FeedbackModal` component was added that surfaces after meaningful engagement:
+- Triggers 30 seconds after the first forecast run, or after the second chat message
+- Respects a 7-day cooldown via `localStorage` to avoid spamming
+- Sends to `POST /feedback` backend endpoint
+
+The 30-second delay gives users time to evaluate the result before being asked.
+
+---
+
+### Security audit
+
+Ran a full audit before pushing to GitHub:
+- `.env` and `.env.local` confirmed never committed (not in git history)
+- No hardcoded API keys found in source files
+- CORS `allowed_origins` updated to include `https://quantcortex.in` alongside `localhost`
+- `allow_credentials: False` confirmed correct for JWT-based auth
+
+---
+
+### Key bug: wrong API port
+
+During load UX testing, progress messages weren't appearing. After extensive backend tracing — added `rowcount` logging to `set_progress`, simulated the full register→set→read flow in isolation, all worked — the root cause was mundane:
+
+`.env.local` had `NEXT_PUBLIC_API_URL=http://localhost:8083` pointing to the old backend instance from a previous session. After the backend was restarted on port 8000, the frontend was silently hitting the wrong server. Reverting to `8083` fixed it immediately.
+
+**Lesson:** always check the network tab first.
+
+---
+
 *Document last updated: March 2026*
 *System version: 2.1.0 (Email verification + auth hardening + localStorage + BroadcastChannel UX)*

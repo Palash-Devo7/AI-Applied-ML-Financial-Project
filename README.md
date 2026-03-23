@@ -276,7 +276,10 @@ finance-rag/
 │   ├── components/
 │   │   ├── header.tsx             # Credit counter + logout
 │   │   ├── auth-guard.tsx         # Route protection
-│   │   └── search-bar.tsx         # Debounced BSE company search
+│   │   ├── search-bar.tsx         # Debounced BSE company search
+│   │   ├── ConditionalHeader.tsx  # Hides header on homepage
+│   │   ├── feedback-modal.tsx     # Post-interaction feedback (30s delay)
+│   │   └── home/                  # Homepage sections (Hero, DotCanvas, Features…)
 │   └── lib/
 │       ├── api.ts                 # API client (Bearer token, SSE streaming)
 │       └── auth.tsx               # Auth context + sessionStorage persistence
@@ -297,6 +300,11 @@ finance-rag/
 - [x] Next.js frontend — dark UI, streaming chat, forecast UI, financial charts
 - [x] JWT auth + credit system + rate limiting
 - [x] Production deployment — quantcortex.in (Vercel + VPS + SSL)
+- [x] Email verification with Resend + BroadcastChannel cross-tab sync
+- [x] Full homepage redesign — landing page with animated DotCanvas, feature sections, roadmap
+- [x] Progressive load UX — real-time step messages, early-ready signal, background indexing banner
+- [x] Live stock pricing — BSE price fetched on every summary request, falls back to cache
+- [x] Feedback modal — 30s delayed trigger, 7-day cooldown
 
 ### In Progress / Planned
 - [ ] **Phase C — GraphRAG:** NetworkX company relationship graph (suppliers, competitors, sectors) — enables impact propagation analysis
