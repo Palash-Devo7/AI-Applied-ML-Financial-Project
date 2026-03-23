@@ -35,7 +35,7 @@ export function DotCanvas() {
     type Phase = "scatter"|"formHi"|"holdHi"|"toRupee"|"holdRupee"|"toText"|"holdText";
     let phase: Phase = "scatter";
     let phaseT = 0, frame = 0;
-    const DUR = { scatter:68, formHi:58, holdHi:110, toRupee:72, holdRupee:180, toText:80, holdText:170 };
+    const DUR = { scatter:100, formHi:90, holdHi:160, toRupee:110, holdRupee:260, toText:120, holdText:240 };
 
     function sampleCanvas(drawFn: (c: CanvasRenderingContext2D) => void, step: number) {
       const off = document.createElement("canvas");

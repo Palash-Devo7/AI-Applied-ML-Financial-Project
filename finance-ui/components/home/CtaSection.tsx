@@ -18,7 +18,7 @@ export function CtaSection() {
           {"Research smarter.\nStart free."}
         </h2>
         <p style={{ fontSize: 15, color: "var(--home-muted)", marginTop: 16, marginBottom: 40, fontWeight: 300 }}>
-          10 queries per day. No credit card required.
+          10 credit points per day. No credit card required.
         </p>
         <div style={{ display: "flex", gap: 12, justifyContent: "center", alignItems: "center" }}>
           <button onClick={() => router.push("/auth/register")} style={{
@@ -38,9 +38,6 @@ export function CtaSection() {
             onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--home-border2)"; e.currentTarget.style.color = "var(--home-text)"; }}
           >Sign in</button>
         </div>
-        <p style={{ fontSize: 11, color: "var(--home-muted2)", marginTop: 24, fontFamily: "var(--font-mono)", letterSpacing: 1 }}>
-          Live at quantcortex.in
-        </p>
       </div>
     </section>
   );

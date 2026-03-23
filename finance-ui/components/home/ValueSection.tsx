@@ -16,7 +16,7 @@ export function ValueSection() {
             {"One platform.\nAny listed company."}
           </h2>
           <p style={{ fontSize: 15, color: "var(--home-muted)", lineHeight: 1.8, maxWidth: 520, marginTop: 16, fontWeight: 300 }}>
-            Indian equity research is fragmented and slow. QuantCortex changes that — one platform, every BSE listed company, instant AI-powered insights.
+            Indian equity research is fragmented and slow. QuantCortex changes that. One platform, every BSE listed company, instant AI-powered insights.
           </p>
         </div>
 

@@ -8,7 +8,7 @@ export function RoadmapSection() {
     { title: "Deeper market intelligence", desc: "Cross-company comparisons, sector analysis, and portfolio-level AI insights." },
     { title: "Predictive signals", desc: "Early-warning signals derived from filing patterns, sentiment shifts, and macro triggers." },
     { title: "Direct investment workflow", desc: "Connect your broker. Go from research to trade without leaving the platform." },
-    { title: "Global market expansion", desc: "NSE, SGX, and international markets — same AI research layer, broader coverage." },
+    { title: "Global market expansion", desc: "NSE, SGX, and international markets with the same AI research layer and broader coverage." },
   ];
 
   return (
