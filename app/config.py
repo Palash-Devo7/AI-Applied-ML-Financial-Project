@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     frontend_url: str = Field(default="https://quantcortex.in")
 
     # ── Rate limiting ─────────────────────────────────────────────────────────
-    rate_limit_query: str = "20/minute"
+    rate_limit_query: str = "5/minute"
     rate_limit_upload: str = "5/minute"
     rate_limit_global: str = "60/minute"
 

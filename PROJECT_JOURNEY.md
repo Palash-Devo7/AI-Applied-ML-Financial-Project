@@ -1657,3 +1657,250 @@ During load UX testing, progress messages weren't appearing. After extensive bac
 
 *Document last updated: March 2026*
 *System version: 2.1.0 (Email verification + auth hardening + localStorage + BroadcastChannel UX)*
+
+---
+
+## 23. Homepage Polish, Mobile Responsiveness & Admin Dashboard
+
+**Completed: March 2026 | Version: 2.2.0**
+
+### Overview
+
+Pre-launch quality pass. Three focus areas:
+1. Homepage content and visual polish
+2. Mobile responsiveness (the homepage was unusable on phones)
+3. Admin visibility into platform usage
+
+---
+
+### Homepage UI Polish
+
+Small but important fixes before letting real users see the page:
+
+| Change | Why |
+|--------|-----|
+| Removed "Cited sources" from PlatformStrip and FeaturesSection | Feature not yet reliable enough to advertise |
+| Replaced "Real-time pricing" with "BSE data pipeline" in PlatformStrip | More accurate description of what actually runs |
+| Changed "10 queries per day" → "10 credit points per day" | Language matches the credit system built in auth layer |
+| Removed "Live at quantcortex.in" from CtaSection footer | Redundant — user is already on the site |
+| Removed all em dashes (—) from visible text | Generic AI-writing tell; replaced with parentheses or reworded |
+| Replaced emoji icons (⚡🧠📊) in ValueSection with Lucide React icons | Consistent with the app's icon language; `FileText`, `MessageSquare`, `Network` at size 22, stroke `#a78bfa` |
+
+---
+
+### Mobile Responsiveness
+
+The homepage was built desktop-first. On mobile it was unreadable — hero text and canvas side-by-side in a tiny space, nav links overlapping, grids too wide.
+
+**Approach:** Added CSS class names to all homepage components, then added media queries in `globals.css` using `!important` overrides. This avoided a full Tailwind refactor.
+
+**Classes added:**
+- `home-navbar`, `home-navbar-links` — Navbar
+- `home-hero`, `home-hero-text`, `home-hero-canvas` — Hero
+- `home-section`, `home-grid-3` — all content sections
+- `home-platform-strip` — PlatformStrip
+- `home-footer` — Footer
+
+**Mobile layout (`≤640px`):**
+- Nav links hidden (hamburger menu is future work)
+- Hero stacks vertically: text first, canvas below at 280px height
+- All 3-column grids collapse to 1 column
+- Padding reduced to 20px horizontal
+
+**Tablet layout (`641px–900px`):**
+- Hero still stacks vertically, canvas at 320px
+- 3-column grids become 2-column
+
+---
+
+### DotCanvas Fixes
+
+Two separate bugs in the animated dot grid canvas hit during this session:
+
+**Bug 1: Vercel TypeScript build error — `canvas` possibly null**
+
+Inside `fadeToOverlay()`, TypeScript correctly flagged that `canvas` (captured in a closure) could be null. Added `if (!canvas) return` guard at the top of the function. Pattern: when a variable captured in a closure might be null, add an explicit guard inside the function rather than relying on the outer scope's check.
+
+**Bug 2: Mobile `IndexSizeError` — source width is 0**
+
+On mobile, `init()` was called immediately on mount before the browser had settled CSS layout, so the canvas `width` and `height` were both 0. `getImageData(0, 0, 0, 0)` throws `IndexSizeError`.
+
+Fix — two guards:
+
+```typescript
+// In sampleCanvas: bail early if dimensions not ready
+if (W <= 0 || H <= 0) return [];
+
+// In mount: retry until dimensions are valid
+function tryInit() {
+  const el = canvasRef.current;
+  if (!el || el.offsetWidth === 0) {
+    requestAnimationFrame(tryInit);
+    return;
+  }
+  init();
+}
+tryInit();
+```
+
+The `tryInit()` retry loop via `requestAnimationFrame` is the correct pattern for canvas work that depends on layout dimensions — it defers until the browser has committed layout.
+
+**Animation speed:** DUR values bumped ~1.5x across all states (scatter, formHi, holdHi, toRupee, holdRupee, toText, holdText) — felt too fast on desktop.
+
+---
+
+### Vercel Analytics
+
+One-line integration:
+
+```typescript
+// app/layout.tsx
+import { Analytics } from "@vercel/analytics/next";
+// ...
+<Analytics />
+```
+
+`@vercel/analytics` is a no-op outside Vercel — works locally without errors. No configuration needed.
+
+---
+
+### Admin Dashboard (`/admin`)
+
+Before opening to real users, needed visibility into signups, activity, and usage patterns.
+
+**Backend — `GET /auth/admin/stats`:**
+
+```
+{
+  totals: { total_users, verified_users, active_today, total_queries, total_forecasts, total_loads },
+  signups_by_day: [{ day, count }],           // last 14 days
+  dau_by_day:     [{ date, count }],          // last 14 days (distinct users with any activity)
+  endpoint_usage: [{ endpoint, count }],      // aggregated from request_log
+  loaded_companies: [{ company, ticker, status, loaded_at }]
+}
+```
+
+`list_all_users()` extended to join `credit_log` and return `credits_used_total` (all-time sum, not just today).
+
+**Frontend — `/admin` page:**
+- 4 stat cards: Total Users, Active Today, Total Queries, Forecasts Run
+- Horizontal bar charts (custom `MiniBar` component) for Signups by Day and DAU
+- Feature usage panel (endpoint → human label mapping)
+- Researched Companies panel with status badges
+- Full users table: Email, Role, Verified, Credits Today, Total Credits, Joined
+
+**Race condition fix:**
+
+The admin page initially fetched data immediately on mount — before `AuthProvider` had restored the JWT from `localStorage`. This caused the API call to go out with no auth header, returning 401, and the page would redirect to login.
+
+Fix: gate the data fetch on `authLoading === false`:
+
+```typescript
+useEffect(() => {
+  if (authLoading) return;  // wait for AuthProvider to finish
+  if (!token || user?.role !== "admin") { router.replace("/auth/login"); return; }
+  Promise.all([adminListUsers(), adminGetStats()]).then(...)
+}, [authLoading, token, user, router]);
+```
+
+**Header button:**
+
+Admin users see a "Dashboard" link in the sticky app header alongside the "Admin" role badge. Regular users see the credit bar.
+
+---
+
+### VPS Deployment Notes
+
+- `resend` Python package was missing from the VPS venv (`pip install resend`)
+- Backend running on port 8080 under systemd (`financerag.service`)
+- `systemctl restart financerag` after each git pull
+- `@vercel/analytics` required no VPS changes — frontend-only
+
+---
+
+### Groq Rate Limit Handling
+
+**The risk:** Groq's free tier is 30 RPM shared across all users. At 20 req/min per user (`rate_limit_query` in config), a single power user could exhaust the quota for everyone.
+
+**Changes:**
+
+| Change | Detail |
+|--------|--------|
+| `GroqBackend.generate()` | Wraps API call in `try/except RateLimitError` → raises `HTTPException(429)` with friendly message |
+| `GroqBackend.raw_generate()` | Same guard added |
+| `GroqBackend.stream_generate()` | Guard on the `create()` call before iteration starts |
+| `config.py rate_limit_query` | Lowered from `"20/minute"` → `"5/minute"` |
+
+At 5 req/min per user, the system can serve ~6 concurrent active users before hitting Groq's 30 RPM cap.
+
+The friendly error message: *"QuantCortex is experiencing high demand right now. Please wait a moment and try again."* — avoids exposing third-party API details to users.
+
+**Why not catch in the retry decorator?** The `@retry` decorator on `generate()` uses `retry_if_exception_type(Exception)`, which would catch `RateLimitError` and retry — making the problem worse by consuming more of the quota. The explicit catch-before-retry pattern prevents this.
+
+---
+
+### Rate Limiting Architecture (Session 23 — final audit)
+
+Three independent layers enforce limits. They stack — a request must pass all three.
+
+---
+
+#### Layer 1 — slowapi (per-IP, enforced before auth)
+
+Implemented in `app/core/limiter.py` (extracted to avoid circular imports between `main.py` and routers). Applied via `@limiter.limit(...)` decorator on each route.
+
+| Endpoint | Limit |
+|---|---|
+| `POST /query` | 5/min |
+| `POST /query/stream` | 5/min |
+| `POST /forecast/event` | 10/min |
+| `POST /companies/load` | 10/min |
+| `POST /documents/upload` | 5/min |
+
+**Key fix during audit:** `config.py` has `rate_limit_query`, `rate_limit_upload`, `rate_limit_global` fields, but the router decorators used hardcoded strings and never read from config. Both query endpoints were hardcoded at `"20/minute"` despite the config saying `"5/minute"`. Fixed by updating the decorators directly to `"5/minute"`.
+
+`rate_limit_global = "60/minute"` remains in config but is not wired up to a global middleware — left as-is since per-endpoint limits are sufficient at current scale.
+
+---
+
+#### Layer 2 — Credit system (per-user, per-day, enforced after auth)
+
+Implemented in `app/core/auth_deps.py` via `require_credits` dependency.
+
+| Operation | Cost |
+|---|---|
+| `/query` or `/query/stream` | 1 credit |
+| `/forecast/event` | 2 credits |
+| `/documents/upload` | 2 credits |
+
+- Trial users: 10 credits/day, resets midnight UTC
+- Admin users: unlimited (role-based bypass)
+- `check_and_consume()` gates the request before processing — returns HTTP 429 with structured error: `{ error: "daily_credit_limit_reached", used, limit, message }`
+- `consume_after_success()` deducts the credit only after a successful response — failed requests are not charged
+
+---
+
+#### Layer 3 — Groq API protection (shared quota, enforced at LLM call)
+
+Groq free tier: 30 RPM shared across all users of the account.
+
+`RateLimitError` from the `openai` SDK is caught explicitly in all three `GroqBackend` methods before the tenacity retry decorator can intercept it:
+
+```python
+try:
+    response = await self._client.chat.completions.create(...)
+except RateLimitError:
+    logger.warning("groq_rate_limit_hit")
+    raise HTTPException(status_code=429, detail="QuantCortex is experiencing high demand right now. Please wait a moment and try again.")
+```
+
+Covered methods: `generate()`, `raw_generate()`, `stream_generate()`.
+
+**Why catch before retry:** The `@retry` decorator uses `retry_if_exception_type(Exception)`, which would catch `RateLimitError` and retry — consuming more of the shared quota on each attempt. Catching first and raising `HTTPException` breaks out of the retry loop immediately.
+
+**Headroom math:** At 5 req/min per user (Layer 1), the system can handle ~6 concurrent active users before hitting Groq's 30 RPM cap. Layer 2 (10 credits/day) limits total daily volume per user. The combination means burst protection (slowapi) + daily volume control (credits) + provider quota protection (Layer 3).
+
+---
+
+*Document last updated: March 2026*
+*System version: 2.2.0 (Homepage polish, mobile responsiveness, admin dashboard, Groq rate limiting)*

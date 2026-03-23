@@ -8,7 +8,7 @@ An end-to-end AI-powered financial research platform built specifically for BSE-
 
 ## Demo
 
-**[quantcortex.in](https://quantcortex.in)** — register a free trial account (10 queries/day)
+**[quantcortex.in](https://quantcortex.in)** — register a free trial account (10 credit points/day)
 
 Try: Search `TATASTEEL` or `RELIANCE` → ask a question → run a forecast
 
@@ -112,11 +112,32 @@ POST /forecast/event {"company": "Tata Steel", "event_type": "capacity_expansion
 
 ### Security & Auth
 - JWT-based authentication with bcrypt password hashing
-- Credit-based usage system (10 credits/day for trial users)
-- Per-endpoint rate limiting (20/min queries, 10/min forecasts, 5/min uploads)
+- Email verification via Resend (unverified users cannot consume credits)
+- Admin role with unlimited access + dashboard
 - CORS restricted to known origins
 - Security headers (X-Content-Type-Options, X-Frame-Options, HSTS in production)
-- Admin role with unlimited access
+
+### Rate Limiting — Three Layers
+
+**Layer 1 — slowapi (per-IP, before auth):**
+
+| Endpoint | Limit |
+|---|---|
+| `POST /query` or `/query/stream` | 5 req/min |
+| `POST /forecast/event` | 10 req/min |
+| `POST /companies/load` | 10 req/min |
+| `POST /documents/upload` | 5 req/min |
+
+**Layer 2 — Credit system (per-user, per-day):**
+- 10 credits/day for trial users, resets midnight UTC. Admin: unlimited.
+- `/query` costs 1 credit, `/forecast/event` and `/documents/upload` cost 2.
+- Credits deducted only on success — failed requests are free.
+- HTTP 429: `{ error: "daily_credit_limit_reached", used, limit }`
+
+**Layer 3 — Groq API quota protection:**
+- Groq free tier: 30 RPM shared across all users.
+- `RateLimitError` caught explicitly in `GroqBackend.generate()`, `raw_generate()`, and `stream_generate()` before the tenacity retry loop fires (retrying on rate limit burns more quota).
+- Returns HTTP 429 with a user-facing message. At 5 req/min per user, the system handles ~6 concurrent active users within Groq's 30 RPM cap.
 
 ### Production
 - Deployed on Hostinger VPS (Ubuntu 24.04) + Nginx reverse proxy

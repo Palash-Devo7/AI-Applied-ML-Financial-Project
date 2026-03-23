@@ -10,6 +10,7 @@ import time
 from typing import Protocol, runtime_checkable
 
 import structlog
+from fastapi import HTTPException
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -182,18 +183,23 @@ class GroqBackend:
         query_type: str = "GENERAL",
     ) -> tuple[str, TokenUsageDetail]:
         """Call Groq API and return (answer, token_usage)."""
+        from openai import RateLimitError
         user_prompt = build_user_prompt(question=question, context=context, query_type=query_type)
         t0 = time.perf_counter()
 
-        response = await self._client.chat.completions.create(
-            model=self.model,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
+        try:
+            response = await self._client.chat.completions.create(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+        except RateLimitError:
+            logger.warning("groq_rate_limit_hit")
+            raise HTTPException(status_code=429, detail="QuantCortex is experiencing high demand right now. Please wait a moment and try again.")
 
         elapsed = time.perf_counter() - t0
         answer = response.choices[0].message.content or ""
@@ -219,15 +225,20 @@ class GroqBackend:
 
     async def raw_generate(self, system: str, user: str) -> tuple[str, int]:
         """Generate with fully custom system + user prompts. Returns (text, total_tokens)."""
-        response = await self._client.chat.completions.create(
-            model=self.model,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        )
+        from openai import RateLimitError
+        try:
+            response = await self._client.chat.completions.create(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
+        except RateLimitError:
+            logger.warning("groq_rate_limit_hit")
+            raise HTTPException(status_code=429, detail="QuantCortex is experiencing high demand right now. Please wait a moment and try again.")
         return response.choices[0].message.content or "", response.usage.total_tokens
 
     async def stream_generate(
@@ -237,17 +248,22 @@ class GroqBackend:
         query_type: str = "GENERAL",
     ):
         """Stream tokens from Groq API as an async generator."""
+        from openai import RateLimitError
         user_prompt = build_user_prompt(question=question, context=context, query_type=query_type)
-        stream = await self._client.chat.completions.create(
-            model=self.model,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            stream=True,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
+        try:
+            stream = await self._client.chat.completions.create(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                stream=True,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+            )
+        except RateLimitError:
+            logger.warning("groq_rate_limit_hit")
+            raise HTTPException(status_code=429, detail="QuantCortex is experiencing high demand right now. Please wait a moment and try again.")
         async for chunk in stream:
             token = chunk.choices[0].delta.content
             if token:

@@ -35,7 +35,7 @@ def _make_service(embedding_service, retrieval_service, generation_service, mcp_
     status_code=status.HTTP_200_OK,
     summary="Submit a financial question for RAG-augmented answer",
 )
-@limiter.limit("20/minute")
+@limiter.limit("5/minute")
 async def query_documents(
     request: Request,
     body: QueryRequest,
@@ -62,7 +62,7 @@ async def query_documents(
     "/query/stream",
     summary="Stream a financial question answer token-by-token (SSE)",
 )
-@limiter.limit("20/minute")
+@limiter.limit("5/minute")
 async def query_stream(
     request: Request,
     body: QueryRequest,
