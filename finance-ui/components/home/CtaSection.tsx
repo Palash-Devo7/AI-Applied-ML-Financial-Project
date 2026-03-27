@@ -21,7 +21,7 @@ export function CtaSection() {
           10 credit points per day. No credit card required.
         </p>
         <div style={{ display: "flex", gap: 12, justifyContent: "center", alignItems: "center" }}>
-          <button onClick={() => router.push("/auth/register")} style={{
+          <button onClick={() => router.push("/auth/login")} style={{
             background: "var(--home-purple)", color: "#1a0a3a", border: "none", borderRadius: 10,
             padding: "14px 32px", fontSize: 14, fontWeight: 700, cursor: "pointer",
             fontFamily: "var(--font-sans)", transition: "all .2s",
