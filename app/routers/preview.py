@@ -60,6 +60,26 @@ def _get_client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+@router.get("/preview/search")
+async def preview_search(q: str = ""):
+    """Public company search — no auth required. Powered by BSE securities cache."""
+    if not q or len(q.strip()) < 2:
+        return {"results": [], "query": q}
+    from app.services.providers.bse_provider import BSEProvider
+    results = BSEProvider.search(q.strip(), limit=12)
+    return {"results": results, "query": q}
+
+
+@router.get("/preview/company-status/{ticker}")
+async def preview_company_status(ticker: str):
+    """Public endpoint — check if a company is loaded and ready to query."""
+    from app.data.financial_db import get_registry_by_ticker
+    record = get_registry_by_ticker(ticker.upper())
+    if not record:
+        return {"status": "not_loaded", "ticker": ticker}
+    return {"status": record.get("status"), "company": record.get("company"), "ticker": ticker}
+
+
 @router.get("/preview/credits")
 async def guest_credits(request: Request, guest_token: str):
     """Return remaining guest credits for a given token."""

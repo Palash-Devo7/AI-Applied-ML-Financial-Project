@@ -308,6 +308,27 @@ export interface GuestCredits {
   remaining: number;
 }
 
+export interface CompanySearchResult {
+  scrip_code: string;
+  ticker: string;
+  name: string;
+  industry?: string;
+}
+
+export async function previewSearchCompanies(q: string): Promise<CompanySearchResult[]> {
+  if (!q || q.trim().length < 2) return [];
+  const res = await fetch(`${API}/preview/search?q=${encodeURIComponent(q.trim())}`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.results ?? [];
+}
+
+export async function previewCompanyStatus(ticker: string): Promise<{ status: string; company?: string }> {
+  const res = await fetch(`${API}/preview/company-status/${encodeURIComponent(ticker)}`);
+  if (!res.ok) return { status: "unknown" };
+  return res.json();
+}
+
 export async function getGuestCredits(guestToken: string): Promise<GuestCredits> {
   const res = await fetch(`${API}/preview/credits?guest_token=${encodeURIComponent(guestToken)}`);
   if (!res.ok) throw new Error("Failed to fetch guest credits");
