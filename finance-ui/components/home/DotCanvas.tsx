@@ -35,7 +35,7 @@ export function DotCanvas() {
     type Phase = "scatter"|"formHi"|"holdHi"|"toRupee"|"holdRupee"|"toText"|"holdText";
     let phase: Phase = "scatter";
     let phaseT = 0, frame = 0;
-    const DUR = { scatter:100, formHi:90, holdHi:160, toRupee:110, holdRupee:260, toText:120, holdText:240 };
+    const DUR = { scatter:55, formHi:55, holdHi:90, toRupee:65, holdRupee:150, toText:65, holdText:130 };
 
     function sampleCanvas(drawFn: (c: CanvasRenderingContext2D) => void, step: number) {
       if (W <= 0 || H <= 0) return [];
@@ -124,8 +124,8 @@ export function DotCanvas() {
     function drawDots() {
       const formed = ["holdHi","toRupee","holdRupee","toText","holdText"].includes(phase);
       dots.forEach(d => {
-        const pulse = formed ? 0.45 + 0.55 * Math.sin(frame * 0.04 + d.ph * Math.PI * 2) : d.alpha;
-        const sz = formed ? d.size * (1 + 0.18 * Math.sin(frame * 0.05 + d.ph * 5)) : d.size;
+        const pulse = formed ? 0.45 + 0.55 * Math.sin(frame * 0.07 + d.ph * Math.PI * 2) : d.alpha;
+        const sz = formed ? d.size * (1 + 0.18 * Math.sin(frame * 0.08 + d.ph * 5)) : d.size;
         safeCtx.beginPath();
         safeCtx.arc(d.x, d.y, Math.max(0.5, sz), 0, Math.PI * 2);
         safeCtx.fillStyle = `rgba(${Math.round(d.col[0]*d.shade)},${Math.round(d.col[1]*d.shade)},${Math.round(d.col[2]*d.shade)},${Math.min(1, pulse).toFixed(2)})`;
@@ -194,22 +194,22 @@ export function DotCanvas() {
         });
         if (phaseT > DUR.scatter) { setTargets(hiT); phase = "formHi"; phaseT = 0; }
       } else if (phase === "formHi") {
-        dots.forEach(d => { d.x += (d.tx-d.x)*0.1; d.y += (d.ty-d.y)*0.1; });
+        dots.forEach(d => { d.x += (d.tx-d.x)*0.14; d.y += (d.ty-d.y)*0.14; });
         if (phaseT > DUR.formHi) { phase = "holdHi"; phaseT = 0; }
       } else if (phase === "holdHi") {
-        dots.forEach(d => { d.x += (d.tx-d.x)*0.2; d.y += (d.ty-d.y)*0.2; });
+        dots.forEach(d => { d.x += (d.tx-d.x)*0.22; d.y += (d.ty-d.y)*0.22; });
         if (phaseT > DUR.holdHi) { setTargets(rupeeT); phase = "toRupee"; phaseT = 0; }
       } else if (phase === "toRupee") {
-        dots.forEach(d => { d.x += (d.tx-d.x)*0.09; d.y += (d.ty-d.y)*0.09; });
+        dots.forEach(d => { d.x += (d.tx-d.x)*0.13; d.y += (d.ty-d.y)*0.13; });
         if (phaseT > DUR.toRupee) { phase = "holdRupee"; phaseT = 0; }
       } else if (phase === "holdRupee") {
-        dots.forEach(d => { d.x += (d.tx-d.x)*0.18; d.y += (d.ty-d.y)*0.18; });
+        dots.forEach(d => { d.x += (d.tx-d.x)*0.20; d.y += (d.ty-d.y)*0.20; });
         if (phaseT > DUR.holdRupee) { setTargets(textT); phase = "toText"; phaseT = 0; }
       } else if (phase === "toText") {
-        dots.forEach(d => { d.x += (d.tx-d.x)*0.09; d.y += (d.ty-d.y)*0.09; d.shade += (1-d.shade)*0.09; });
+        dots.forEach(d => { d.x += (d.tx-d.x)*0.13; d.y += (d.ty-d.y)*0.13; d.shade += (1-d.shade)*0.13; });
         if (phaseT > DUR.toText) { phase = "holdText"; phaseT = 0; }
       } else if (phase === "holdText") {
-        dots.forEach(d => { d.x += (d.tx-d.x)*0.15; d.y += (d.ty-d.y)*0.15; d.shade = 1; });
+        dots.forEach(d => { d.x += (d.tx-d.x)*0.18; d.y += (d.ty-d.y)*0.18; d.shade = 1; });
         if (phaseT > DUR.holdText) { done = true; fadeToOverlay(); return; }
       }
 
