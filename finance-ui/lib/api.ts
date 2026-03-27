@@ -300,6 +300,72 @@ export function submitFeedback(payload: FeedbackPayload): Promise<{ status: stri
   });
 }
 
+// ─── Guest preview ────────────────────────────────────────────────────────────
+
+export interface GuestCredits {
+  used: number;
+  limit: number;
+  remaining: number;
+}
+
+export async function getGuestCredits(guestToken: string): Promise<GuestCredits> {
+  const res = await fetch(`${API}/preview/credits?guest_token=${encodeURIComponent(guestToken)}`);
+  if (!res.ok) throw new Error("Failed to fetch guest credits");
+  return res.json();
+}
+
+export function streamPreviewQuery(
+  question: string,
+  company: string | undefined,
+  guestToken: string,
+  onChunk: (text: string) => void,
+  onDone: (creditsRemaining: number) => void,
+  onError: (err: Error, isGuestLimit?: boolean) => void
+): AbortController {
+  const ctrl = new AbortController();
+  fetch(`${API}/query/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, company: company || undefined, guest_token: guestToken }),
+    signal: ctrl.signal,
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const detail = body?.detail;
+        const isGuestLimit = detail?.error === "guest_limit_reached";
+        const message = typeof detail === "string"
+          ? detail
+          : detail?.message ?? `${res.status} ${res.statusText}`;
+        onError(new Error(message), isGuestLimit);
+        return;
+      }
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No response body");
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        for (const line of chunk.split("\n")) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === "token" && event.text) onChunk(event.text);
+            else if (event.type === "done") onDone(event.credits_remaining ?? 0);
+            else if (event.type === "error") onError(new Error(event.text));
+          } catch {
+            // ignore malformed lines
+          }
+        }
+      }
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError") onError(err);
+    });
+  return ctrl;
+}
+
 // ─── Admin API ────────────────────────────────────────────────────────────────
 
 export interface AdminUser {

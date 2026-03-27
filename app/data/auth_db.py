@@ -19,7 +19,8 @@ CREDIT_COSTS: dict[str, int] = {
     "/documents/upload": 2,
 }
 
-DAILY_LIMIT_TRIAL = 10  # credits per day for trial users
+DAILY_LIMIT_TRIAL = 10   # credits per day for trial users
+GUEST_CREDIT_LIMIT = 3   # lifetime credits for guest sessions
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -86,6 +87,15 @@ def init_auth_db() -> None:
                 query            TEXT,
                 response_time_ms INTEGER,
                 had_error        INTEGER NOT NULL DEFAULT 0
+            );
+        """)
+
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS guest_sessions (
+                guest_id     TEXT PRIMARY KEY,
+                credits_used INTEGER NOT NULL DEFAULT 0,
+                first_seen   TEXT NOT NULL DEFAULT (datetime('now')),
+                last_seen    TEXT NOT NULL DEFAULT (datetime('now'))
             );
         """)
 
@@ -303,6 +313,34 @@ def get_credit_summary(user_id: str, role: str) -> dict:
     used = get_credits_used_today(user_id)
     remaining = max(0, DAILY_LIMIT_TRIAL - used)
     return {"used": used, "limit": DAILY_LIMIT_TRIAL, "remaining": remaining, "role": "trial"}
+
+
+# ─── Guest sessions ───────────────────────────────────────────────────────────
+
+def get_guest_credits_used(guest_id: str) -> int:
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT credits_used FROM guest_sessions WHERE guest_id = ?", (guest_id,)
+        ).fetchone()
+    return row["credits_used"] if row else 0
+
+
+def check_and_consume_guest(guest_id: str) -> tuple[bool, int, int]:
+    """Returns (allowed, credits_used, limit). Does NOT consume — call consume_guest_credit after success."""
+    used = get_guest_credits_used(guest_id)
+    return (used < GUEST_CREDIT_LIMIT), used, GUEST_CREDIT_LIMIT
+
+
+def consume_guest_credit(guest_id: str) -> None:
+    with _lock, _get_conn() as conn:
+        conn.execute(
+            """INSERT INTO guest_sessions (guest_id, credits_used)
+               VALUES (?, 1)
+               ON CONFLICT(guest_id) DO UPDATE SET
+                 credits_used = credits_used + 1,
+                 last_seen = datetime('now')""",
+            (guest_id,),
+        )
 
 
 # ─── Feedback ─────────────────────────────────────────────────────────────────

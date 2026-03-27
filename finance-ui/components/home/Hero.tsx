@@ -19,7 +19,7 @@ export function Hero() {
           QuantCortex is a single platform to research every BSE listed company. Search a ticker, ask questions in plain language, and get AI powered insights backed by actual filings.
         </p>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <button onClick={() => router.push("/auth/login")} style={{
+          <button onClick={() => router.push("/preview")} style={{
             background: "var(--home-purple)", color: "#1a0a3a", border: "none", borderRadius: 10,
             padding: "14px 28px", fontSize: 14, fontWeight: 700, cursor: "pointer",
             fontFamily: "var(--font-sans)", transition: "all .2s",

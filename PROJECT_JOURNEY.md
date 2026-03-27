@@ -1902,5 +1902,104 @@ Covered methods: `generate()`, `raw_generate()`, `stream_generate()`.
 
 ---
 
+## 24. Guest Preview — No-Login Free Trial
+
+**Completed: March 2026 | Version: 2.3.0**
+
+### Overview
+
+Users shouldn't need to sign up to see what QuantCortex can do. A friend's feedback surfaced the friction directly: "if I have to sign up just to see what your app does, it's wasting my time." The goal was a zero-login preview that gives full-capability responses (not a stripped demo) while keeping the platform safe from abuse.
+
+Design principle: **growth mode** — give them the real thing, then ask them to sign up after they've seen value.
+
+---
+
+### Architecture
+
+**Guest identity**
+
+Guests are identified by a fingerprint, never stored as PII:
+
+```
+guest_id = SHA256(client_IP + guest_token)[:32]
+```
+
+- `guest_token` = UUID generated in the browser on first visit, stored in `localStorage`
+- Hashed server-side before touching the database — IP and token are never persisted separately
+- Token persists across page refreshes (same device/browser = same guest identity)
+
+**Credit model**
+
+- 3 lifetime credits per guest (not per day — per device/browser permanently)
+- Tracked in a separate `guest_sessions` table, completely isolated from the `users` table
+- Credit is consumed only after a successful SSE stream completes (failed requests are not charged)
+- The `done` event in the SSE stream carries `credits_remaining` so the frontend counter updates instantly
+
+**Rate limiting**
+
+Two independent layers guard the preview endpoint:
+
+| Layer | Mechanism | Limit |
+|-------|-----------|-------|
+| Hard server cap | slowapi `@limiter.limit("3/day")` per IP | 3 requests/day/IP |
+| Lifetime credit cap | `check_and_consume_guest()` in SQLite | 3 total per guest_id |
+
+IP-based cap prevents automation abuse. Credit cap is the user-visible limit.
+
+When credits are exhausted, the API returns HTTP 429 with `{ error: "guest_limit_reached", message: "...", used, limit }`. The frontend checks `error === "guest_limit_reached"` to distinguish this from server-side rate limiting.
+
+---
+
+### Backend Changes
+
+**`app/data/auth_db.py`**
+
+- Added `GUEST_CREDIT_LIMIT = 3`
+- Added `guest_sessions` table in `init_auth_db()`
+- Added `get_guest_credits_used()`, `check_and_consume_guest()`, `consume_guest_credit()`
+
+**`app/routers/preview.py`** (new file)
+
+- `POST /query/preview` — no auth required, full SSE pipeline identical to `/query/stream`
+- `GET /preview/credits?guest_token=...` — returns `{ used, limit, remaining }` for the frontend counter
+
+**`app/main.py`**
+
+- Registered `preview.router`
+
+---
+
+### Frontend Changes
+
+**`finance-ui/lib/api.ts`**
+
+- Added `getGuestCredits(guestToken)` and `streamPreviewQuery(...)`
+- `onError` callback receives `isGuestLimit: boolean` — page shows signup nudge vs generic error
+
+**`finance-ui/app/preview/page.tsx`** (new page)
+
+- UUID on first mount → `localStorage["guest_token"]`
+- Fetches remaining credits on mount
+- Company ticker input + question input + 3 suggested query chips
+- SSE streaming with live Markdown rendering
+- Credits counter in top bar updates after each query
+- After credits exhausted: signup nudge card
+
+**`finance-ui/components/home/Hero.tsx`**
+
+- "Try free" button routes to `/preview` instead of `/auth/login`
+
+---
+
+### Key Design Decisions
+
+**Full capability, not a stripped demo:** Same pipeline as authenticated `/query/stream`. No degraded model, no shorter context. A watered-down result would signal mediocre product.
+
+**Credits consumed after success:** If Groq rate-limits mid-stream, the `done` event never fires and `consume_guest_credit()` is never called. Consistent with authenticated user behavior.
+
+**guest_token in localStorage, not a cookie:** No consent banner needed, no backend session. Token only appears in POST body.
+
+---
+
 *Document last updated: March 2026*
 *System version: 2.2.0 (Homepage polish, mobile responsiveness, admin dashboard, Groq rate limiting)*

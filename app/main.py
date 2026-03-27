@@ -140,10 +140,11 @@ def create_app() -> FastAPI:
         return response
 
     # ── Routers ───────────────────────────────────────────────────────────────
-    from app.routers import auth, collections, companies, feedback, forecast, health, ingestion, market_data, query
+    from app.routers import auth, collections, companies, feedback, forecast, health, ingestion, market_data, query, preview
 
     app.include_router(auth.router)
     app.include_router(health.router)
+    app.include_router(preview.router)
     app.include_router(ingestion.router, prefix="/documents")
     app.include_router(query.router)
     app.include_router(collections.router)

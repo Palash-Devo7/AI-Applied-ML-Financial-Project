@@ -8,9 +8,9 @@ An end-to-end AI-powered financial research platform built specifically for BSE-
 
 ## Demo
 
-**[quantcortex.in](https://quantcortex.in)** — register a free trial account (10 credit points/day)
+**[quantcortex.in](https://quantcortex.in)** — try 3 free queries with no sign-up required, or register for 10 credit points/day
 
-Try: Search `TATASTEEL` or `RELIANCE` → ask a question → run a forecast
+Try: Go to [quantcortex.in/preview](https://quantcortex.in/preview) → type `TATASTEEL` → ask a question → see full AI analysis instantly
 
 ---
 
@@ -109,6 +109,13 @@ POST /forecast/event {"company": "Tata Steel", "event_type": "capacity_expansion
 - Bull Agent, Bear Agent, Macro Agent each produce independent analysis
 - Synthesizer combines into structured forecast with base/bull/bear cases
 - Returns key risks, key catalysts, confidence assessment
+
+### Guest Preview
+- `/preview` page — no login required, full-capability AI responses
+- 3 lifetime credits per guest tracked in isolated `guest_sessions` SQLite table
+- Guest identity: `SHA256(IP + localStorage_token)[:32]` — no PII stored
+- slowapi `3/day` per IP as hard server-side abuse cap
+- After 3 credits: signup nudge card with "Create free account" → `/auth/login`
 
 ### Security & Auth
 - JWT-based authentication with bcrypt password hashing
