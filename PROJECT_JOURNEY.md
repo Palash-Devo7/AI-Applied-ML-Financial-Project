@@ -2003,3 +2003,38 @@ When credits are exhausted, the API returns HTTP 429 with `{ error: "guest_limit
 
 *Document last updated: March 2026*
 *System version: 2.2.0 (Homepage polish, mobile responsiveness, admin dashboard, Groq rate limiting)*
+
+---
+
+## Session 25 — About Page
+
+**Date:** March 2026
+**Version:** 2.3.0
+
+### What Was Built
+
+Added a new `/about` page to the marketing site and updated the Navbar to include an About link.
+
+### Frontend Changes
+
+**`finance-ui/app/about/page.tsx`** (new page)
+
+- Hero section: "What is QuantCortex" with product headline and description
+- Team section: circular photo frame (`/fc.jpeg`) with purple glow, name, "Founder and Engineer" title, GitHub + LinkedIn links, bio focused on results and work done
+- Mission section: 3 current pillars + "What is coming next" divider + 4 roadmap cards (GraphRAG, Zerodha Kite, Portfolio AI, Sector Intelligence) + closing statement + CTA
+- Uses same design tokens and components as the landing page (Navbar, Footer, `--home-*` CSS vars)
+
+**`finance-ui/components/home/Navbar.tsx`**
+
+- Added "About" link with active state highlight
+- Logo is now clickable (routes to `/`)
+- Section scroll links now work from any page (navigate to `/#section` when not on home)
+
+**`finance-ui/components/ConditionalHeader.tsx`**
+
+- `/about` added to the list of pages that suppress the app Header for logged-out users (same as `/`)
+
+**`finance-ui/app/globals.css`**
+
+- Added responsive rules: `about-profile-grid` (single column on mobile), `about-stats-grid` (2-col on mobile), `about-roadmap-grid` (single column on mobile)
+

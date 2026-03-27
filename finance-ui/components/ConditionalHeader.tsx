@@ -10,8 +10,8 @@ export function ConditionalHeader() {
 
   // Auth pages have their own layout
   if (pathname.startsWith("/auth")) return null;
-  // Homepage: only show the app Header when logged in (landing page has its own Navbar)
-  if (pathname === "/" && !user) return null;
+  // Homepage and About: only show the app Header when logged in (these pages have their own Navbar)
+  if ((pathname === "/" || pathname === "/about") && !user) return null;
 
   return <Header />;
 }

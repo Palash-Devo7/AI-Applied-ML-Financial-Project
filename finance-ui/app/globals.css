@@ -162,6 +162,9 @@
   .home-platform-strip { padding: 16px 20px !important; overflow-x: auto !important; }
   .home-footer { padding: 32px 20px 24px !important; }
   .home-footer-grid { grid-template-columns: 1fr !important; gap: 28px !important; }
+  .about-profile-grid { grid-template-columns: 1fr !important; gap: 40px !important; }
+  .about-stats-grid { grid-template-columns: repeat(2,1fr) !important; }
+  .about-roadmap-grid { grid-template-columns: 1fr !important; }
 }
 
 @media (min-width: 641px) and (max-width: 900px) {

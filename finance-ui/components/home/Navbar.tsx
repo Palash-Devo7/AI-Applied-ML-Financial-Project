@@ -1,12 +1,17 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 
 export function Navbar() {
   const router = useRouter();
+  const pathname = usePathname();
 
-  function scrollTo(id: string) {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+  function handleSectionLink(id: string) {
+    if (pathname === "/") {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+    } else {
+      router.push(`/#${id}`);
+    }
   }
 
   return (
@@ -17,7 +22,7 @@ export function Navbar() {
       padding: "0 48px", display: "flex", alignItems: "center",
       justifyContent: "space-between", height: 60,
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div onClick={() => router.push("/")} style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
         <div style={{
           width: 30, height: 30, background: "var(--home-purple)", borderRadius: 8,
           display: "flex", alignItems: "center", justifyContent: "center",
@@ -30,13 +35,20 @@ export function Navbar() {
 
       <div className="home-navbar-links" style={{ display: "flex", gap: 28 }}>
         {[["Platform", "value"], ["Features", "features"], ["Roadmap", "roadmap"]].map(([label, id]) => (
-          <span key={id} onClick={() => scrollTo(id)} style={{
+          <span key={id} onClick={() => handleSectionLink(id)} style={{
             fontSize: 13, color: "var(--home-muted)", cursor: "pointer", transition: "color .2s",
           }}
             onMouseEnter={e => (e.currentTarget.style.color = "var(--home-text)")}
             onMouseLeave={e => (e.currentTarget.style.color = "var(--home-muted)")}
           >{label}</span>
         ))}
+        <span onClick={() => router.push("/about")} style={{
+          fontSize: 13, color: pathname === "/about" ? "var(--home-text)" : "var(--home-muted)",
+          cursor: "pointer", transition: "color .2s",
+        }}
+          onMouseEnter={e => (e.currentTarget.style.color = "var(--home-text)")}
+          onMouseLeave={e => (e.currentTarget.style.color = pathname === "/about" ? "var(--home-text)" : "var(--home-muted)")}
+        >About</span>
       </div>
 
       <button onClick={() => router.push("/auth/login")} style={{

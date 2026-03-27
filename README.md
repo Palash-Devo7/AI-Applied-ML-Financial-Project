@@ -12,6 +12,8 @@ An end-to-end AI-powered financial research platform built specifically for BSE-
 
 Try: Go to [quantcortex.in/preview](https://quantcortex.in/preview) → type `TATASTEEL` → ask a question → see full AI analysis instantly
 
+About: [quantcortex.in/about](https://quantcortex.in/about) — the platform and the team behind it
+
 ---
 
 ## What Makes This Different
