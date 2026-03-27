@@ -366,6 +366,34 @@ export function streamPreviewQuery(
   return ctrl;
 }
 
+export interface PreviewForecastRequest {
+  company: string;
+  event_type: string;
+  event_description: string;
+  horizon_days?: number;
+  guest_token: string;
+}
+
+export async function previewForecast(payload: PreviewForecastRequest): Promise<ForecastResult> {
+  const res = await fetch(`${API}/forecast/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const detail = body?.detail;
+    const isGuestLimit = detail?.error === "guest_limit_reached";
+    const message = typeof detail === "string"
+      ? detail
+      : detail?.message ?? `${res.status} ${res.statusText}`;
+    const err = new Error(message) as Error & { isGuestLimit?: boolean };
+    err.isGuestLimit = isGuestLimit;
+    throw err;
+  }
+  return res.json();
+}
+
 // ─── Admin API ────────────────────────────────────────────────────────────────
 
 export interface AdminUser {

@@ -325,21 +325,21 @@ def get_guest_credits_used(guest_id: str) -> int:
     return row["credits_used"] if row else 0
 
 
-def check_and_consume_guest(guest_id: str) -> tuple[bool, int, int]:
+def check_and_consume_guest(guest_id: str, cost: int = 1) -> tuple[bool, int, int]:
     """Returns (allowed, credits_used, limit). Does NOT consume — call consume_guest_credit after success."""
     used = get_guest_credits_used(guest_id)
-    return (used < GUEST_CREDIT_LIMIT), used, GUEST_CREDIT_LIMIT
+    return (used + cost <= GUEST_CREDIT_LIMIT), used, GUEST_CREDIT_LIMIT
 
 
-def consume_guest_credit(guest_id: str) -> None:
+def consume_guest_credit(guest_id: str, cost: int = 1) -> None:
     with _lock, _get_conn() as conn:
         conn.execute(
             """INSERT INTO guest_sessions (guest_id, credits_used)
-               VALUES (?, 1)
+               VALUES (?, ?)
                ON CONFLICT(guest_id) DO UPDATE SET
-                 credits_used = credits_used + 1,
+                 credits_used = credits_used + ?,
                  last_seen = datetime('now')""",
-            (guest_id,),
+            (guest_id, cost, cost),
         )
 
 
