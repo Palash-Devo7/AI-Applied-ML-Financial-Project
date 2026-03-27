@@ -381,6 +381,7 @@ function ChatTab({
   onCreditUpdate: (n: number) => void;
   onGuestLimit: () => void;
 }) {
+  const router = useRouter();
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -407,7 +408,8 @@ function ChatTab({
       (remaining) => {
         onCreditUpdate(remaining);
         setStreaming(false);
-        if (remaining === 0) onGuestLimit();
+        // Don't call onGuestLimit() here — let the user read the answer first.
+        // The nudge appears below the answer when creditsRemaining === 0.
       },
       (err, isGuestLimit) => {
         setStreaming(false);
@@ -464,6 +466,10 @@ function ChatTab({
           <div ref={bottomRef} />
         </div>
       )}
+
+      {creditsRemaining === 0 && hasQueried && !streaming && (
+        <SignupNudge router={router} />
+      )}
     </div>
   );
 }
@@ -483,6 +489,7 @@ function ForecastTab({
   onCreditUpdate: (n: number) => void;
   onGuestLimit: () => void;
 }) {
+  const router = useRouter();
   const [eventType, setEventType] = useState("earnings_beat");
   const [description, setDescription] = useState("");
   const [horizon, setHorizon] = useState(90);
@@ -507,7 +514,7 @@ function ForecastTab({
       setResult(r);
       const newRemaining = Math.max(0, creditsRemaining - 2);
       onCreditUpdate(newRemaining);
-      if (newRemaining === 0) onGuestLimit();
+      // Don't call onGuestLimit() — let the user read the result first.
     } catch (e) {
       const err = e as Error & { isGuestLimit?: boolean };
       if (err.isGuestLimit) { onGuestLimit(); onCreditUpdate(0); }
@@ -662,6 +669,10 @@ function ForecastTab({
             </div>
           )}
         </div>
+      )}
+
+      {creditsRemaining === 0 && result && !loading && (
+        <SignupNudge router={router} />
       )}
     </div>
   );
